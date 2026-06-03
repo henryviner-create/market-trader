@@ -31,6 +31,7 @@ from market_trader.observability import configure_logging, get_logger
 from market_trader.observability.metrics import default_registry
 
 if TYPE_CHECKING:
+    from market_trader.execution.broker import Account, Position
     from market_trader.runtime import CycleResult
 
 
@@ -214,6 +215,49 @@ def cmd_alpaca_check(_: argparse.Namespace) -> int:
         f"alpaca ok [{endpoint}]: equity=${account.equity:,.2f} "
         f"cash=${account.cash:,.2f} buying_power=${account.buying_power:,.2f}"
     )
+    return 0
+
+
+def _portfolio_summary(account: Account, positions: list[Position]) -> str:
+    """Plain-English P&L snapshot from an account and its open positions."""
+    deployed = sum(p.market_value for p in positions)
+    unrealized = sum(p.unrealized_pl for p in positions)
+    lines = [
+        f"portfolio  equity=${account.equity:,.2f}  cash=${account.cash:,.2f}  "
+        f"deployed=${deployed:,.2f} across {len(positions)} position(s)"
+    ]
+    if account.last_equity:
+        day_pl = account.equity - account.last_equity
+        day_pct = day_pl / account.last_equity * 100
+        lines.append(f"  today:          {day_pl:+,.2f} ({day_pct:+.2f}%)")
+    lines.append(f"  unrealized P&L: {unrealized:+,.2f}")
+    ranked = sorted(positions, key=lambda p: p.unrealized_pl)
+    if ranked:
+        worst = "  ".join(f"{p.symbol} {p.unrealized_pl:+,.0f}" for p in ranked[:3])
+        best = "  ".join(f"{p.symbol} {p.unrealized_pl:+,.0f}" for p in ranked[-3:][::-1])
+        lines.append(f"  worst: {worst}")
+        lines.append(f"  best:  {best}")
+    return "\n".join(lines)
+
+
+def cmd_status(_: argparse.Namespace) -> int:
+    """Read-only portfolio snapshot: equity, today's P&L, deployed cash, win/lose names."""
+    settings = get_settings()
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        print("status: keys not set (MT_ALPACA_KEY_ID / MT_ALPACA_SECRET_KEY)")
+        return 1
+    from market_trader.execution.alpaca import AlpacaBroker
+
+    try:
+        broker = AlpacaBroker(
+            settings.alpaca_key_id, settings.alpaca_secret_key, paper=settings.alpaca_paper
+        )
+        account = broker.get_account()
+        positions = broker.get_positions()
+    except Exception as exc:  # surface, never swallow
+        print(f"status: request failed: {exc}")
+        return 1
+    print(_portfolio_summary(account, positions))
     return 0
 
 
@@ -410,6 +454,9 @@ def build_parser() -> argparse.ArgumentParser:
     health.add_argument("--timeout", type=float, default=5.0)
     health.set_defaults(func=cmd_healthcheck)
 
+    sub.add_parser(
+        "status", help="read-only portfolio P&L snapshot (equity, today, win/lose)"
+    ).set_defaults(func=cmd_status)
     sub.add_parser("alpaca-check", help="probe the Alpaca paper account").set_defaults(
         func=cmd_alpaca_check
     )

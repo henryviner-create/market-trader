@@ -95,7 +95,13 @@ class AlpacaBroker:
     def get_positions(self) -> list[Position]:
         resp = self._request("GET", "/v2/positions")
         return [
-            Position(p["symbol"], float(p["qty"]), float(p.get("avg_entry_price", 0.0)))
+            Position(
+                p["symbol"],
+                float(p["qty"]),
+                float(p.get("avg_entry_price", 0.0)),
+                market_value=float(p.get("market_value", 0.0)),
+                unrealized_pl=float(p.get("unrealized_pl", 0.0)),
+            )
             for p in resp
         ]
 
@@ -126,4 +132,5 @@ class AlpacaBroker:
             equity=float(a.get("equity", 0.0)),
             cash=float(a.get("cash", 0.0)),
             buying_power=float(a.get("buying_power", 0.0)),
+            last_equity=float(a.get("last_equity", 0.0)),
         )
