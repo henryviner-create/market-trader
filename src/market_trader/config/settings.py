@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
 
+    # --- Broker (Alpaca; paper-first) -----------------------------------
+    # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
+    # committed. alpaca_paper=true uses the paper endpoints.
+    alpaca_key_id: str | None = None
+    alpaca_secret_key: str | None = None
+    alpaca_paper: bool = True
+
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.

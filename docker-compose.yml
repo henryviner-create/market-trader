@@ -37,7 +37,7 @@ services:
       - path: .env
         required: false
     environment:
-      MT_DATABASE_URL: ${MT_DATABASE_URL:-postgresql+psycopg://market:market@db:5432/market_trader}
+      MT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-market}:${POSTGRES_PASSWORD:-market}@db:5432/${POSTGRES_DB:-market_trader}
     depends_on:
       db:
         condition: service_healthy
@@ -53,7 +53,7 @@ services:
       - path: .env
         required: false
     environment:
-      MT_DATABASE_URL: ${MT_DATABASE_URL:-postgresql+psycopg://market:market@db:5432/market_trader}
+      MT_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-market}:${POSTGRES_PASSWORD:-market}@db:5432/${POSTGRES_DB:-market_trader}
       MT_EXECUTION_MODE: ${MT_EXECUTION_MODE:-paper}
       MT_LIVE_TRADING_ENABLED: ${MT_LIVE_TRADING_ENABLED:-false}
     depends_on:
