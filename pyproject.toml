@@ -13,6 +13,7 @@ dependencies = [
     "psycopg[binary]>=3.2",
     "pandas>=2.2",
     "numpy>=1.26",
+    "scikit-learn>=1.5",
     "structlog>=24.1",
 ]
 
