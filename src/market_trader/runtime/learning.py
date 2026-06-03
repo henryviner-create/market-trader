@@ -59,11 +59,16 @@ def log_cycle_predictions(
 
 
 def _forward_returns_at(panel: pd.DataFrame, t: datetime, horizon: int) -> pd.Series:
-    """Per-symbol realised return over the ``horizon`` bars strictly after ``t``."""
+    """Per-symbol realised return over the ``horizon`` bars strictly after ``t``.
+
+    Empty until the *full* horizon has elapsed, so a prediction is never graded
+    against a partial (or not-yet-formed) window — which would manufacture
+    meaningless IC/hit-rate the moment it is logged.
+    """
     rets = panel.pct_change()
     pos = int(rets.index.searchsorted(t, side="right"))
     window = rets.iloc[pos : pos + horizon]
-    if window.empty:
+    if len(window) < horizon:
         return pd.Series(dtype=float)
     return (1.0 + window.fillna(0.0)).prod() - 1.0
 
