@@ -82,8 +82,17 @@ def run_paper_cycle(
         raw = {s: 1.0 / len(winners) for s in winners}
         target = apply_risk_limits(raw, limits)
 
+    # Rebalance must also flatten holdings that fell out of the winner set: the
+    # engine only acts on symbols present in the target, so a held non-winner
+    # needs an explicit 0 (with a price) or it would linger on the persistent
+    # account forever. ``target`` stays the winners-only *desired* portfolio.
+    rebalance_target = dict(target)
+    for position in broker.get_positions():
+        if position.symbol not in rebalance_target and position.symbol in prices:
+            rebalance_target[position.symbol] = 0.0
+
     engine = ExecutionEngine(broker, settings=settings, limits=limits)
-    orders = engine.rebalance(target, prices, as_of=as_of) if target else []
+    orders = engine.rebalance(rebalance_target, prices, as_of=as_of) if rebalance_target else []
 
     brief: str | None = None
     if llm is not None:
@@ -123,6 +132,11 @@ def run_live_paper_cycle(
     """Live paper cycle: Alpaca data + Alpaca paper broker + (optional) Claude brief."""
     if not (settings.alpaca_key_id and settings.alpaca_secret_key):
         raise RuntimeError("Alpaca keys not set (MT_ALPACA_KEY_ID / MT_ALPACA_SECRET_KEY)")
+    if not settings.alpaca_paper:
+        # Reaching the *live* Alpaca endpoint requires live trading to be armed
+        # (both switches). Without this, MT_ALPACA_PAPER=false would route real
+        # orders even though the engine's live gate only keys off execution_mode.
+        settings.assert_live_allowed()
 
     from market_trader.collectors.alpaca import AlpacaDataClient
     from market_trader.execution.alpaca import AlpacaBroker
