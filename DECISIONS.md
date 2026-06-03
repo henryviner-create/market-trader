@@ -48,12 +48,33 @@ published later. Tested explicitly.
 
 **D8 — Execution safety planted now, enforced later.** Settings default to
 `execution_mode=paper` and `live_trading_enabled=false`; `assert_live_allowed()`
-fails closed unless *both* switches are flipped. Live order routing (Phase 5)
-will be coupled to hard caps, circuit-breakers, and a kill-switch. Per the user's
-choice, execution capability is sequenced *earlier* than the brief's Phase 8, but
-the safety primitives remain inseparable from it.
+fails closed unless *both* switches are flipped. Live order routing will be
+coupled to hard caps, circuit-breakers, and a kill-switch. See **D10** for the
+execution-tier policy (paper-first, human-gated).
 
 **D9 — SQLite as the local integration-test backend.** The SQLAlchemy store runs
 on SQLite (in-memory, `StaticPool`) for fast local/CI tests without a daemon, and
 on Postgres for production and CI's integration job. Alembic targets Postgres
 (it enables `pgvector`); tests create the schema from ORM metadata.
+
+**D10 — Execution is paper-first and human-gated (supersedes the earlier
+"wire live early").** Adopting the execution add-on module. The execution tier is
+the *last* stage of the pipeline, strictly **downstream of the risk layer**
+(orders that breach a risk constraint are refused in code before submission), and
+is built and validated against **Alpaca paper** first — same code path as live,
+only the base URL and key set differ. Live trading is a separate, later,
+explicitly **human-approved** decision gated behind measurable paper graduation
+criteria: beats equal-weight and buy-and-hold net of costs across a meaningful
+multi-regime paper period, acceptable calibration, max drawdown within tolerance,
+no unresolved operational incident, and all guardrails implemented + tested. The
+paper→live switch defaults to paper and needs two env switches **plus** a startup
+confirmation; **the system must never enable live autonomously** — if asked, it
+prints the gate checklist and a risk warning and requires explicit confirmation.
+Mandatory guardrails (kill-switch, hard pre-trade limits, drawdown
+circuit-breaker, order sanity checks, heartbeat/dead-man's switch, low capital
+ceiling, full audit log) are built and proven in the **paper** phase before live
+is even an option. Roadmap change: **Phase 8 = execution tier, paper only**
+(acceptance = the graduation gates); **Phase 9 (new) = gated live consideration**,
+starting in a live-dry-run/log-only sub-mode, then a tiny capital ceiling. This
+reverses the interim "wire live early" decision; **no broker scaffold is
+introduced in Phase 2** anymore.

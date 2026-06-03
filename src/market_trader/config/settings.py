@@ -33,18 +33,32 @@ class Settings(BaseSettings):
     # When set (e.g. in CI), integration tests run against this database.
     test_database_url: str | None = None
 
-    # --- execution safety (enforced in Phase 5; defaults are the safe state) ---
+    # --- Execution & trading safety (PAPER-FIRST; enforced in Phase 8/9) ---
+    # `execution_mode` is the single TRADING_MODE control. It defaults to
+    # "paper" and is intentionally inconvenient to flip: arming live requires
+    # BOTH MT_EXECUTION_MODE=live AND MT_LIVE_TRADING_ENABLED=true, and the
+    # execution tier (Phase 8) additionally demands a startup confirmation and
+    # a passing paper->live graduation-gate checklist. Nothing here touches a
+    # broker until Phase 8 (paper) / Phase 9 (gated live). Defaults are safe.
     execution_mode: Literal["paper", "live"] = "paper"
     live_trading_enabled: bool = False
+    live_dry_run: bool = True  # in live mode: compute orders but log-only, submit nothing
+
+    # Guardrail caps (enforced by the risk + execution tiers; see DECISIONS D10).
     max_gross_exposure: float = 1.0
+    max_net_exposure: float = 1.0
     max_position_weight: float = 0.10
     max_drawdown_halt: float = 0.20
+    max_daily_loss: float = 0.02  # fraction of capital
+    max_orders_per_interval: int = 50
+    capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
 
     def assert_live_allowed(self) -> None:
         """Fail closed: live order routing requires *both* explicit switches.
 
-        The execution tier (Phase 5) calls this before any real-money path. It
-        exists now so the invariant is impossible to forget later.
+        The execution tier (Phase 8) calls this before any real-money path —
+        and even then only after the paper->live graduation gates are met and a
+        human has confirmed. The system must never flip itself to live.
         """
         if not (self.execution_mode == "live" and self.live_trading_enabled):
             raise RuntimeError(

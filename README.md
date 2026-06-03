@@ -14,7 +14,9 @@ public information and reasoning over it with explicit uncertainty.
 |------:|-------|------|
 | **0** | Foundations: bitemporal store, canonical schema, knowledge-time clock, validation/backtest harness, CI | **complete** |
 | 1 | MVP collectors (EDGAR / FRED / prices / news / congress) + dashboard | next |
-| 2–8 | Signals, market-memory, forecasting, weighting, risk, feedback, 24/7, execution | planned |
+| 2–7 | Signals, market-memory, forecasting, weighting, risk, feedback, 24/7 | planned |
+| 8 | Execution tier — **Alpaca paper only** + all guardrails (graduation gates) | planned |
+| 9 | Gated live consideration — human-approved, low capital ceiling | gated |
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full target design and
 [`DECISIONS.md`](DECISIONS.md) for the rationale behind key choices.
@@ -64,10 +66,17 @@ scripts/         runnable demos
 tests/           unit + bitemporal property + leakage suites
 ```
 
-## Execution posture
+## Execution posture (paper-first, human-gated)
 
-Default is **paper**, and live trading is **disabled** until *both*
-`MT_EXECUTION_MODE=live` and `MT_LIVE_TRADING_ENABLED=true` are set
-(`Settings.assert_live_allowed()` fails closed otherwise). The execution tier
-(Phase 5) couples the live switch to hard caps, circuit-breakers, and a
-kill-switch.
+The system is **paper-first**: every default, config, and example defaults to
+paper, and no default can place a live order. Execution is the **last tier**,
+strictly downstream of the risk layer.
+
+Live trading is **disabled** until *both* `MT_EXECUTION_MODE=live` and
+`MT_LIVE_TRADING_ENABLED=true` are set (`Settings.assert_live_allowed()` fails
+closed otherwise) — and even then only after the paper→live **graduation gates**
+are met and a human explicitly approves. **The system will never enable live on
+its own.** The execution tier and all mandatory guardrails (kill-switch, hard
+pre-trade limits, drawdown circuit-breaker, heartbeat/dead-man's switch, capital
+ceiling, audit log) are built and proven in **Phase 8 (paper only)**; gated live
+consideration is **Phase 9**. See `DECISIONS.md` D10.

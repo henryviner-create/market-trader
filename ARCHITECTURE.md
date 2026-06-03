@@ -31,7 +31,7 @@ harness level.
 | 8. Feedback loop | Prediction logging, scoring, drift monitoring, retraining, signal pruning | Phase 6 |
 | 9. Reasoning (LLM) | Sourced thesis per name, constrained by the event-study statistics | Phase 2+ |
 | 10. Presentation | Dashboard, daily briefing, alerts | Phase 1+ |
-| Execution | Broker abstraction (paper-default), hard gates for live | Phase 2 (paper) / Phase 5 (live) |
+| Execution | Broker-agnostic adapter (Alpaca), **paper-first**, strictly downstream of risk, all guardrails | **Phase 8 (paper)** / Phase 9 (gated live) |
 
 ## What Phase 0 delivers
 
@@ -72,6 +72,31 @@ equal-weight and buy-and-hold **net of costs** with confidence intervals;
 validated across regimes, not just dates; calibration treated as first-class.
 Backtest returns are treated as an upper bound. Dedicated leakage and bitemporal
 test suites must pass for any pipeline to be considered valid.
+
+## Execution tier (paper-first, human-gated)
+
+Execution is the **final** stage and sits strictly downstream of risk:
+
+```
+Forecast → Score → Portfolio & Risk (sizing · limits · drawdown breakers)
+        → Execution adapter (broker-agnostic; Alpaca default)
+        → Broker API → fills/rejections → feedback loop
+```
+
+- Orders that breach any risk constraint are **refused in code before
+  submission** — execution cannot bypass risk.
+- A single `TRADING_MODE` control (`execution_mode`) defaults to **paper** and is
+  deliberately hard to flip (two env switches + a startup confirmation). Paper and
+  live share one code path; only base URL + keys differ.
+- **Mandatory guardrails**, all built and tested in the paper phase: kill-switch,
+  hard pre-trade limits (per-name size, gross/net notional, daily loss, order
+  rate), drawdown circuit-breaker, order sanity checks, heartbeat/dead-man's
+  switch, a low hard **capital ceiling**, and a full timestamped audit log.
+- **Graduation gates (paper → live):** beat equal-weight and buy-and-hold net of
+  costs across a meaningful multi-regime paper run, acceptable calibration, max
+  drawdown within tolerance, no unresolved incident, all guardrails proven. Live
+  is then a **separate, explicit, human-approved** step (Phase 9) that begins in
+  a live-dry-run/log-only sub-mode. **The system never enables live on its own.**
 
 ## Operations (target)
 
