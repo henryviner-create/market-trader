@@ -96,7 +96,10 @@ class Settings(BaseSettings):
     # exactly like every other execution path.
     intraday_enabled: bool = False
     intraday_timeframe: str = "1Min"
-    intraday_interval_seconds: int = 60  # how often the loop wakes during market hours
+    # How often the loop wakes during market hours. 5 min gives a broad-universe
+    # pass time to finish before the next one starts (60s could not keep up), and
+    # the signals are daily-horizon so nothing is lost by waking less often.
+    intraday_interval_seconds: int = 300
     intraday_lookback_minutes: int = 180  # minute-bar history fetched each pass
     intraday_top_quantile: float = 0.3
     intraday_momentum_lookback: int = 30
