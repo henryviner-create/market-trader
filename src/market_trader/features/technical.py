@@ -1,0 +1,59 @@
+"""Price/technical features. All read prices via the point-in-time view."""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from datetime import datetime
+
+import pandas as pd
+
+from market_trader.backtest.pit import StorePriceView
+from market_trader.features.base import Feature
+from market_trader.storage.bitemporal import BitemporalStore
+
+
+class Momentum(Feature):
+    family = "technical"
+
+    def __init__(self, lookback: int = 60) -> None:
+        self.lookback = lookback
+        self.name = f"mom_{lookback}"
+
+    def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
+        panel = StorePriceView(store, as_of).price_panel()
+        if panel.empty or panel.shape[0] < self.lookback + 1:
+            return pd.Series(index=list(symbols), dtype=float)
+        p = panel.ffill()
+        mom = p.iloc[-1] / p.iloc[-1 - self.lookback] - 1.0
+        return mom.reindex(list(symbols))
+
+
+class MeanReversion(Feature):
+    family = "technical"
+
+    def __init__(self, lookback: int = 5) -> None:
+        self.lookback = lookback
+        self.name = f"meanrev_{lookback}"
+
+    def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
+        panel = StorePriceView(store, as_of).price_panel()
+        if panel.empty or panel.shape[0] < self.lookback + 1:
+            return pd.Series(index=list(symbols), dtype=float)
+        p = panel.ffill()
+        short_ret = p.iloc[-1] / p.iloc[-1 - self.lookback] - 1.0
+        return (-short_ret).reindex(list(symbols))  # recent losers favoured
+
+
+class Volatility(Feature):
+    family = "technical"
+
+    def __init__(self, window: int = 20) -> None:
+        self.window = window
+        self.name = f"vol_{window}"
+
+    def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
+        returns = StorePriceView(store, as_of).returns_panel()
+        if returns.empty:
+            return pd.Series(index=list(symbols), dtype=float)
+        vol = returns.tail(self.window).std(ddof=0)
+        return vol.reindex(list(symbols))

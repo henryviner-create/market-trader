@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Environments
+.venv/
+.env
+.env.*
+!.env.example
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local data lake / artifacts (never commit data or secrets)
+data/
+artifacts/
+*.sqlite
+*.sqlite3
+*.db
+
+# Notebooks
+.ipynb_checkpoints/
+notebooks/**/output/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/

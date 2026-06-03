@@ -1,0 +1,27 @@
+name: Docker image
+
+# Validates that the engine image builds (the test gate lives in ci.yml). Image
+# push to a registry + gated deploy to the VPS are added in Phase 7.
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build engine image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: market-trader:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

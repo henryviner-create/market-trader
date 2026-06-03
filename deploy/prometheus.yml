@@ -1,0 +1,11 @@
+# Prometheus scrape config. The engine exposes /metrics on :8080.
+# Started via the monitoring profile:
+#   docker compose --profile monitoring up -d
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  - job_name: market-trader-engine
+    static_configs:
+      - targets: ["engine:8080"]

@@ -1,0 +1,31 @@
+# Keep the build context (and image) lean, and secrets out.
+.git
+.github
+.venv
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.pyright
+.hypothesis
+.coverage
+.coverage.*
+htmlcov
+coverage.xml
+
+# Local data / secrets — never copy into an image
+data/
+artifacts/
+*.sqlite
+*.sqlite3
+*.db
+.env
+.env.*
+!.env.example
+
+# Not needed at runtime
+tests/
+notebooks/
+*.md
+!README.md
