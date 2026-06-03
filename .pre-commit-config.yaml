@@ -1,0 +1,29 @@
+# Install once:  uv run pre-commit install && uv run pre-commit install --hook-type pre-push
+# Fast checks run on commit; slower type/test checks run on push.
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff (lint, autofix)
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+        require_serial: true
+      - id: black
+        name: black (format)
+        entry: uv run black
+        language: system
+        types: [python]
+      - id: pyright
+        name: pyright (types)
+        entry: uv run pyright
+        language: system
+        types: [python]
+        pass_filenames: false
+        stages: [pre-push]
+      - id: pytest
+        name: pytest (fast suite)
+        entry: uv run pytest -m "not integration" -q
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
