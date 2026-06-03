@@ -24,8 +24,9 @@ from market_trader.execution.broker import Broker, Order
 from market_trader.execution.engine import ExecutionEngine
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
-from market_trader.portfolio import RiskLimits, apply_risk_limits, composite_score, equal_weights
+from market_trader.portfolio import RiskLimits, apply_risk_limits
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
+from market_trader.runtime.scoring import ScoreFn, build_scorer, composite_scorer
 from market_trader.storage import InMemoryBitemporalStore
 from market_trader.storage.bitemporal import BitemporalStore
 from market_trader.universe.liquid import MEGACAP_WATCHLIST, resolve_universe
@@ -64,6 +65,7 @@ def run_paper_cycle(
     limits: RiskLimits | None = None,
     llm: LLMProvider | None = None,
     feature_store: FeatureStore | None = None,
+    score_fn: ScoreFn | None = None,
     top_quantile: float = 0.3,
     max_positions: int | None = None,
 ) -> CycleResult:
@@ -72,11 +74,8 @@ def run_paper_cycle(
     fs = feature_store or FeatureStore(store, default_features())
     matrix = fs.compute_matrix(as_of, symbols)
 
-    scores = (
-        composite_score(matrix, equal_weights(matrix.columns))
-        if not matrix.empty
-        else pd.Series(dtype=float)
-    )
+    scorer = score_fn or composite_scorer()
+    scores = scorer(matrix, as_of) if not matrix.empty else pd.Series(dtype=float)
     ranked = scores.dropna().sort_values(ascending=False)
 
     target: dict[str, float] = {}
@@ -174,6 +173,8 @@ def run_live_paper_cycle(
 
         llm = anthropic_provider_from_settings(settings)
 
+    fs = FeatureStore(store, default_features())
+    score_fn = build_scorer(settings, store, fs, watchlist, as_of)
     return run_paper_cycle(
         store,
         as_of=as_of,
@@ -182,5 +183,7 @@ def run_live_paper_cycle(
         broker=broker,
         settings=settings,
         llm=llm,
+        feature_store=fs,
+        score_fn=score_fn,
         max_positions=settings.max_positions,
     )

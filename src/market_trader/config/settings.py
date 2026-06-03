@@ -60,6 +60,11 @@ class Settings(BaseSettings):
     # holds, so breadth yields a diversified portfolio rather than 2-3 megacaps.
     universe: str = "liquid"
     max_positions: int = 20
+    # Ranking model: "composite" (transparent equal-weight z-score; default) or
+    # "forecast" (the trained, calibrated ensemble). Keep it on "composite" until
+    # the forecaster clears the equal-weight baseline out-of-sample (the
+    # `validate-forecaster` command measures this). Forecast = the daily cycle only.
+    scorer: str = "composite"
 
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never

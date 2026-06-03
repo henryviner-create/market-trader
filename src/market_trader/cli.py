@@ -210,6 +210,54 @@ def cmd_llm_check(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_validate_forecaster(_: argparse.Namespace) -> int:
+    """Out-of-sample gate: does the trained forecaster beat the equal-weight baseline?
+
+    Ingests daily history for the universe and reports purged-CV AUC for both.
+    Only flip MT_SCORER=forecast if the forecaster wins here.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        print("validate-forecaster: Alpaca keys not set")
+        return 1
+
+    from datetime import date, timedelta
+
+    from market_trader.collectors import IngestionGateway, PriceCollector
+    from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.core.time import utcnow
+    from market_trader.runtime.scoring import forecaster_vs_baseline_auc
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    universe = resolve_universe(settings.universe)
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        end = date.today()
+        data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
+        records = data.fetch_daily_bars(
+            universe, start=end - timedelta(days=400), end=end, feed=settings.alpaca_data_feed
+        )
+        IngestionGateway(store).ingest(PriceCollector().normalize(records))
+        res = forecaster_vs_baseline_auc(store, universe, utcnow())
+    except Exception as exc:
+        print(f"validate-forecaster failed: {exc}")
+        return 1
+
+    fc, bl = res["forecast_cv_auc"], res["baseline_auc"]
+    print(f"validate-forecaster [{int(res['n_samples'])} samples, {len(universe)} names]")
+    print(f"  forecast  CV AUC: {fc:.4f}")
+    print(f"  baseline     AUC: {bl:.4f}")
+    beats = fc > bl
+    print(
+        f"  verdict: forecaster {'BEATS' if beats else 'does NOT beat'} the baseline "
+        f"-> {'MT_SCORER=forecast is justified' if beats else 'keep MT_SCORER=composite'}"
+    )
+    return 0
+
+
 def _print_cycle(result: CycleResult, *, dry: bool) -> None:
     tag = "dry-run" if dry else "live-paper"
     print(f"cycle {result.as_of.isoformat()}  [{tag}]")
@@ -291,6 +339,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("llm-check", help="probe the hosted Anthropic API").set_defaults(
         func=cmd_llm_check
     )
+    sub.add_parser(
+        "validate-forecaster", help="out-of-sample AUC: forecaster vs the baseline"
+    ).set_defaults(func=cmd_validate_forecaster)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
     cycle.add_argument(
