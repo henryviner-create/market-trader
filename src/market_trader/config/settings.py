@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     # 403s on free plans. Override with MT_ALPACA_DATA_FEED=sip once subscribed.
     alpaca_data_feed: str = "iex"
 
+    # --- Intraday live loop (PAPER; OFF by default) ----------------------
+    # The continuous, market-reactive loop only runs when explicitly enabled
+    # (MT_INTRADAY_ENABLED=true) AND the market is open. Signals are computed on
+    # minute bars, so the lookbacks below count *minutes*. It stays paper-gated
+    # exactly like every other execution path.
+    intraday_enabled: bool = False
+    intraday_timeframe: str = "1Min"
+    intraday_interval_seconds: int = 60  # how often the loop wakes during market hours
+    intraday_lookback_minutes: int = 180  # minute-bar history fetched each pass
+    intraday_top_quantile: float = 0.3
+    intraday_momentum_lookback: int = 30
+    intraday_meanrev_lookback: int = 10
+    intraday_vol_window: int = 30
+
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.

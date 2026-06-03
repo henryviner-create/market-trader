@@ -18,6 +18,9 @@ from market_trader.core.schema import Observation
 from market_trader.core.time import day_close
 
 PRICE_DATASET = "price.ohlcv"
+# Intraday (minute) bars live in their own dataset so per-minute event_times never
+# collide with the daily path, which stamps every bar at its session close.
+PRICE_INTRADAY_DATASET = "price.ohlcv.intraday"
 
 
 def business_days(start: date, n: int) -> list[date]:

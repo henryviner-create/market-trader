@@ -12,7 +12,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 DATA_BASE_URL = "https://data.alpaca.markets"
@@ -99,3 +99,55 @@ class AlpacaDataClient:
                     }
                 )
         return records
+
+    def fetch_intraday_bars(
+        self,
+        symbols: Sequence[str],
+        *,
+        start: datetime,
+        end: datetime,
+        timeframe: str = "1Min",
+        feed: str = "iex",
+        adjustment: str = "raw",
+    ) -> list[dict[str, Any]]:
+        """Intraday OHLCV bars per symbol, full minute ``timestamp`` preserved.
+
+        Unlike :meth:`fetch_daily_bars` (which truncates to a date), the live loop
+        needs the bar's exact time, so each record keeps ``timestamp``. Pages are
+        followed via ``next_page_token`` so a wide window can't silently truncate.
+        """
+        base = {
+            "symbols": ",".join(symbols),
+            "timeframe": timeframe,
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "adjustment": adjustment,
+            "feed": feed,
+            "limit": 10000,
+        }
+        records: list[dict[str, Any]] = []
+        page_token: str | None = None
+        while True:
+            params = dict(base)
+            if page_token:
+                params["page_token"] = page_token
+            query = urllib.parse.urlencode(params)
+            status, payload = self._get(f"{self._base}/v2/stocks/bars?{query}", self._headers)
+            if status >= 300:
+                raise AlpacaDataError(f"HTTP {status}: {payload}")
+            for symbol, bars in (payload.get("bars") or {}).items():
+                for bar in bars:
+                    records.append(
+                        {
+                            "timestamp": bar["t"],
+                            "symbol": symbol,
+                            "open": bar.get("o"),
+                            "high": bar.get("h"),
+                            "low": bar.get("l"),
+                            "close": bar.get("c"),
+                            "volume": bar.get("v"),
+                        }
+                    )
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return records
