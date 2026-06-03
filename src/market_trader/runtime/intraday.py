@@ -27,8 +27,9 @@ from market_trader.core.time import utcnow
 from market_trader.execution.broker import Broker
 from market_trader.features import Feature, FeatureStore, MeanReversion, Momentum, Volatility
 from market_trader.observability import get_logger
-from market_trader.runtime.cycle import DEFAULT_WATCHLIST, CycleResult, run_paper_cycle
+from market_trader.runtime.cycle import CycleResult, run_paper_cycle
 from market_trader.storage.bitemporal import BitemporalStore
+from market_trader.universe.liquid import resolve_universe
 
 _log = get_logger("intraday")
 
@@ -63,7 +64,7 @@ def run_intraday_cycle(
     feature_store: FeatureStore | None = None,
 ) -> CycleResult:
     """One intraday pass: ingest recent minute bars, score, and rebalance on the broker."""
-    watchlist = list(watchlist or DEFAULT_WATCHLIST)
+    watchlist = list(watchlist or resolve_universe(settings.universe))
 
     # Real network/db clients are only built when not injected (tests inject all three).
     if data_client is None or broker is None:
@@ -115,6 +116,9 @@ def run_intraday_cycle(
         feature_store=fs,
         llm=None,  # no per-minute LLM brief — far under the daily call budget
         top_quantile=settings.intraday_top_quantile,
+        max_positions=settings.max_positions,
+        exit_band_multiple=settings.exit_band_multiple,
+        risk_weighting=settings.risk_weighting,
     )
 
 

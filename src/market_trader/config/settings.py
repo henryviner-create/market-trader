@@ -53,6 +53,32 @@ class Settings(BaseSettings):
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
 
+    # --- Universe & portfolio breadth -----------------------------------
+    # `universe` selects what to scan each cycle: "liquid" (broad, ~110 names
+    # across all sectors; default), "watchlist" (the 8 megacaps), or a
+    # comma-separated custom list. `max_positions` caps how many names the book
+    # holds, so breadth yields a diversified portfolio rather than 2-3 megacaps.
+    universe: str = "liquid"
+    max_positions: int = 20
+    # Ranking model: "composite" (transparent equal-weight z-score; default) or
+    # "forecast" (the trained, calibrated ensemble). Keep it on "composite" until
+    # the forecaster clears the equal-weight baseline out-of-sample (the
+    # `validate-forecaster` command measures this). Forecast = the daily cycle only.
+    scorer: str = "composite"
+    # Holding discipline + sizing. exit_band_multiple keeps a held name until it
+    # leaves the top (entry_count * multiple) — so the book holds winners instead
+    # of churning on rank noise (your "it sells too quickly"). risk_weighting:
+    # "inverse_vol" sizes each name to ~equal risk; "equal" splits evenly.
+    exit_band_multiple: float = 2.0
+    risk_weighting: str = "inverse_vol"
+    # News signal (daily cycle only; OFF by default). When on, the cycle pulls
+    # recent GDELT articles for the universe and adds news-flow + sentiment
+    # features to the ranking. Per-symbol fetch is heavy, so it's daily, not
+    # intraday. Like every signal, it must earn its keep out-of-sample.
+    news_enabled: bool = False
+    news_window_days: int = 7
+    news_timespan: str = "3d"
+
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
     # committed. alpaca_paper=true uses the paper endpoints.

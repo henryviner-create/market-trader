@@ -98,6 +98,29 @@ def test_feed_is_overridable() -> None:
     assert "feed=sip" in calls[0]  # paid plans can opt back into the consolidated feed
 
 
+def test_fetch_daily_bars_follows_pagination() -> None:
+    # A broad universe (many symbols x history) spans multiple pages; the client
+    # must follow next_page_token or it would silently drop the later symbols.
+    pages: list[dict[str, Any]] = [
+        {"bars": {"AAPL": [{"t": "2023-06-01T04:00:00Z", "c": 181.0}]}, "next_page_token": "P2"},
+        {"bars": {"MSFT": [{"t": "2023-06-01T04:00:00Z", "c": 332.0}]}, "next_page_token": None},
+    ]
+    calls: list[str] = []
+
+    def transport(url: str, headers: dict[str, str]) -> tuple[int, dict[str, Any]]:
+        calls.append(url)
+        return 200, pages[len(calls) - 1]
+
+    client = AlpacaDataClient("k", "s", transport=transport)
+    records = client.fetch_daily_bars(
+        ["AAPL", "MSFT"], start=date(2023, 6, 1), end=date(2023, 6, 2)
+    )
+
+    assert len(calls) == 2  # followed the page token
+    assert "page_token=P2" in calls[1]
+    assert {r["symbol"] for r in records} == {"AAPL", "MSFT"}
+
+
 def test_http_error_status_raises() -> None:
     transport, _ = _transport(status=403, payload={"message": "forbidden"})
     client = AlpacaDataClient("k", "s", transport=transport)

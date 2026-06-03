@@ -11,7 +11,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from datetime import date, datetime
 from typing import Any
 
@@ -54,6 +54,28 @@ class AlpacaDataClient:
         self._base = base_url.rstrip("/")
         self._get = transport or _urllib_get
 
+    def _iter_bars(self, params: dict[str, Any]) -> Iterator[tuple[str, dict[str, Any]]]:
+        """Yield ``(symbol, bar)`` across every page, following ``next_page_token``.
+
+        Pagination matters once a request spans many symbols x history: Alpaca caps
+        bars per response, so a single call would silently truncate a broad fetch.
+        """
+        page_token: str | None = None
+        while True:
+            query = dict(params)
+            if page_token:
+                query["page_token"] = page_token
+            url = f"{self._base}/v2/stocks/bars?{urllib.parse.urlencode(query)}"
+            status, payload = self._get(url, self._headers)
+            if status >= 300:
+                raise AlpacaDataError(f"HTTP {status}: {payload}")
+            for symbol, bars in (payload.get("bars") or {}).items():
+                for bar in bars:
+                    yield symbol, bar
+            page_token = payload.get("next_page_token")
+            if not page_token:
+                return
+
     def fetch_daily_bars(
         self,
         symbols: Sequence[str],
@@ -69,36 +91,27 @@ class AlpacaDataClient:
         consolidated ``sip`` feed 403s on free plans ("subscription does not
         permit querying recent SIP data"), so it must be opted into explicitly.
         """
-        query = urllib.parse.urlencode(
+        params = {
+            "symbols": ",".join(symbols),
+            "timeframe": "1Day",
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "adjustment": adjustment,
+            "feed": feed,
+            "limit": 10000,
+        }
+        return [
             {
-                "symbols": ",".join(symbols),
-                "timeframe": "1Day",
-                "start": start.isoformat(),
-                "end": end.isoformat(),
-                "adjustment": adjustment,
-                "feed": feed,
-                "limit": 10000,
+                "date": str(bar["t"])[:10],
+                "symbol": symbol,
+                "open": bar.get("o"),
+                "high": bar.get("h"),
+                "low": bar.get("l"),
+                "close": bar.get("c"),
+                "volume": bar.get("v"),
             }
-        )
-        status, payload = self._get(f"{self._base}/v2/stocks/bars?{query}", self._headers)
-        if status >= 300:
-            raise AlpacaDataError(f"HTTP {status}: {payload}")
-
-        records: list[dict[str, Any]] = []
-        for symbol, bars in (payload.get("bars") or {}).items():
-            for bar in bars:
-                records.append(
-                    {
-                        "date": str(bar["t"])[:10],
-                        "symbol": symbol,
-                        "open": bar.get("o"),
-                        "high": bar.get("h"),
-                        "low": bar.get("l"),
-                        "close": bar.get("c"),
-                        "volume": bar.get("v"),
-                    }
-                )
-        return records
+            for symbol, bar in self._iter_bars(params)
+        ]
 
     def fetch_intraday_bars(
         self,
@@ -113,10 +126,9 @@ class AlpacaDataClient:
         """Intraday OHLCV bars per symbol, full minute ``timestamp`` preserved.
 
         Unlike :meth:`fetch_daily_bars` (which truncates to a date), the live loop
-        needs the bar's exact time, so each record keeps ``timestamp``. Pages are
-        followed via ``next_page_token`` so a wide window can't silently truncate.
+        needs the bar's exact time, so each record keeps ``timestamp``.
         """
-        base = {
+        params = {
             "symbols": ",".join(symbols),
             "timeframe": timeframe,
             "start": start.isoformat(),
@@ -125,29 +137,15 @@ class AlpacaDataClient:
             "feed": feed,
             "limit": 10000,
         }
-        records: list[dict[str, Any]] = []
-        page_token: str | None = None
-        while True:
-            params = dict(base)
-            if page_token:
-                params["page_token"] = page_token
-            query = urllib.parse.urlencode(params)
-            status, payload = self._get(f"{self._base}/v2/stocks/bars?{query}", self._headers)
-            if status >= 300:
-                raise AlpacaDataError(f"HTTP {status}: {payload}")
-            for symbol, bars in (payload.get("bars") or {}).items():
-                for bar in bars:
-                    records.append(
-                        {
-                            "timestamp": bar["t"],
-                            "symbol": symbol,
-                            "open": bar.get("o"),
-                            "high": bar.get("h"),
-                            "low": bar.get("l"),
-                            "close": bar.get("c"),
-                            "volume": bar.get("v"),
-                        }
-                    )
-            page_token = payload.get("next_page_token")
-            if not page_token:
-                return records
+        return [
+            {
+                "timestamp": bar["t"],
+                "symbol": symbol,
+                "open": bar.get("o"),
+                "high": bar.get("h"),
+                "low": bar.get("l"),
+                "close": bar.get("c"),
+                "volume": bar.get("v"),
+            }
+            for symbol, bar in self._iter_bars(params)
+        ]

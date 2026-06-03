@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import date
 
+import pandas as pd
 import pytest
 
 from market_trader.config import Settings
@@ -34,6 +35,70 @@ def _seeded_store(symbols: list[str], n_days: int = 120):
         o.entity_id: float(o.value["close"]) for o in store.as_of(as_of, dataset=PRICE_DATASET)
     }
     return store, as_of, prices
+
+
+def test_run_paper_cycle_logs_predictions_when_enabled() -> None:
+    from market_trader.feedback.prediction_log import load_predictions
+
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+
+    run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        prediction_log=True,
+        model_version="composite",
+    )
+    assert load_predictions(store, as_of, model_version="composite")  # logged for later grading
+
+
+def test_run_paper_cycle_uses_injected_score_fn() -> None:
+    # The pluggable scorer (the seam the forecaster plugs into) must drive
+    # selection: a scorer that ranks S3 top makes S3 a winner regardless of features.
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+
+    def score(matrix: pd.DataFrame, _at) -> pd.Series:
+        return pd.Series([10.0 if s == "S3" else 1.0 for s in matrix.index], index=matrix.index)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        score_fn=score,
+        top_quantile=0.3,
+    )
+    assert "S3" in result.target_weights
+
+
+def test_run_paper_cycle_caps_book_size_for_diversification() -> None:
+    # A broad universe must produce a diversified book capped at max_positions,
+    # not 2-3 names — this is what makes universe breadth useful.
+    symbols = [f"S{i}" for i in range(30)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=1_000_000.0)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        top_quantile=0.9,  # 0.9 * 30 = 27 ranked...
+        max_positions=5,  # ...but the cap holds the book to 5
+    )
+    assert len(result.target_weights) == 5
+    assert len(result.orders) == 5 and all(o.side == OrderSide.BUY for o in result.orders)
 
 
 def test_run_paper_cycle_scores_targets_and_fills() -> None:
