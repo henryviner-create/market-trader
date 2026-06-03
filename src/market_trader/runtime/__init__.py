@@ -8,11 +8,14 @@ from market_trader.runtime.cycle import (
     run_live_paper_cycle,
     run_paper_cycle,
 )
+from market_trader.runtime.intraday import run_intraday_cycle, run_trading_loop
 
 __all__ = [
     "DEFAULT_WATCHLIST",
     "CycleResult",
     "run_dry_paper_cycle",
+    "run_intraday_cycle",
     "run_live_paper_cycle",
     "run_paper_cycle",
+    "run_trading_loop",
 ]

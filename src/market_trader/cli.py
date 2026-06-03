@@ -96,6 +96,33 @@ def cmd_migrate(_: argparse.Namespace) -> int:
     return 0
 
 
+def _maybe_start_intraday_loop(settings: Any, log: Any) -> None:
+    """Attach the continuous intraday trading loop as a daemon thread, if armed.
+
+    OFF unless ``MT_INTRADAY_ENABLED=true`` and Alpaca keys are present. Runs
+    alongside the health server; a crash is logged and never takes the process
+    (and thus the health endpoint) down with it.
+    """
+    if not settings.intraday_enabled:
+        return
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        log.warning("intraday_disabled", reason="alpaca keys not set")
+        return
+
+    import threading
+
+    from market_trader.runtime import run_trading_loop
+
+    def _loop() -> None:
+        try:
+            run_trading_loop(settings)
+        except Exception as exc:  # surface; keep the health server alive
+            log.error("intraday_loop_crashed", error=str(exc))
+
+    threading.Thread(target=_loop, name="intraday-loop", daemon=True).start()
+    log.info("intraday_loop_started", interval_seconds=settings.intraday_interval_seconds)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
@@ -110,10 +137,13 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGTERM, _stand_down)
     signal.signal(signal.SIGINT, _stand_down)
 
+    _maybe_start_intraday_loop(settings, log)
+
     log.info(
         "engine_serving",
         mode=settings.execution_mode,
         live_enabled=settings.live_trading_enabled,
+        intraday=settings.intraday_enabled,
         port=args.port,
     )
     server.serve_forever()
@@ -215,6 +245,18 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     """Run one end-to-end paper cycle: score -> risk -> paper execution -> brief."""
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    if args.intraday:
+        from market_trader.runtime import run_intraday_cycle
+
+        try:
+            result = run_intraday_cycle(settings)
+        except Exception as exc:
+            print(f"cycle failed: {exc}")
+            return 1
+        _print_cycle(result, dry=False)
+        return 0
+
     from market_trader.runtime import run_dry_paper_cycle, run_live_paper_cycle
 
     try:
@@ -255,6 +297,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--dry-run",
         action="store_true",
         help="synthetic data + local paper broker (no network or keys needed)",
+    )
+    cycle.add_argument(
+        "--intraday",
+        action="store_true",
+        help="one intraday (minute-bar) cycle instead of the daily one",
     )
     cycle.set_defaults(func=cmd_cycle)
 

@@ -16,6 +16,7 @@ from typing import Any
 from market_trader.execution.broker import (
     Account,
     Order,
+    OrderSide,
     OrderStatus,
     OrderType,
     Position,
@@ -97,6 +98,27 @@ class AlpacaBroker:
             Position(p["symbol"], float(p["qty"]), float(p.get("avg_entry_price", 0.0)))
             for p in resp
         ]
+
+    def get_open_orders(self) -> list[Order]:
+        resp = self._request("GET", "/v2/orders?status=open&limit=500&nested=false")
+        return [
+            Order(
+                client_order_id=o.get("client_order_id", ""),
+                symbol=o["symbol"],
+                side=OrderSide(o["side"]),
+                qty=float(o.get("qty") or 0.0),
+                status=_STATUS_MAP.get(o.get("status", ""), OrderStatus.ACCEPTED),
+                filled_qty=float(o.get("filled_qty") or 0.0),
+            )
+            for o in resp
+        ]
+
+    def get_clock(self) -> dict[str, Any]:
+        """Alpaca market clock: {is_open, next_open, next_close, timestamp}."""
+        return self._request("GET", "/v2/clock")
+
+    def is_market_open(self) -> bool:
+        return bool(self.get_clock().get("is_open", False))
 
     def get_account(self) -> Account:
         a = self._request("GET", "/v2/account")
