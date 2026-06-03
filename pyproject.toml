@@ -62,7 +62,12 @@ target-version = ["py311"]
 
 [tool.pyright]
 include = ["src", "tests"]
-exclude = ["**/__pycache__", "src/market_trader/storage/migrations"]
+exclude = [
+    "**/__pycache__",
+    "src/market_trader/storage/migrations",
+    # Streamlit shell: depends on the optional `dashboard` extra, not installed in CI.
+    "src/market_trader/presentation/dashboard_app.py",
+]
 pythonVersion = "3.11"
 typeCheckingMode = "basic"
 venvPath = "."
