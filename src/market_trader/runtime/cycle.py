@@ -26,6 +26,7 @@ from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
 from market_trader.portfolio import RiskLimits, apply_risk_limits
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
+from market_trader.runtime.learning import log_cycle_predictions
 from market_trader.runtime.scoring import ScoreFn, build_scorer, composite_scorer
 from market_trader.storage import InMemoryBitemporalStore
 from market_trader.storage.bitemporal import BitemporalStore
@@ -68,6 +69,9 @@ def run_paper_cycle(
     score_fn: ScoreFn | None = None,
     top_quantile: float = 0.3,
     max_positions: int | None = None,
+    prediction_log: bool = False,
+    model_version: str = "composite",
+    prediction_horizon: int = 5,
 ) -> CycleResult:
     """Score the universe, form risk-managed target weights, execute on the broker."""
     limits = limits or _limits_from_settings(settings)
@@ -77,6 +81,17 @@ def run_paper_cycle(
     scorer = score_fn or composite_scorer()
     scores = scorer(matrix, as_of) if not matrix.empty else pd.Series(dtype=float)
     ranked = scores.dropna().sort_values(ascending=False)
+
+    if prediction_log and not matrix.empty:
+        # Persist this call's ranking + features so it can be graded once outcomes land.
+        log_cycle_predictions(
+            store,
+            ranked,
+            matrix,
+            as_of,
+            model_version=model_version,
+            horizon_days=prediction_horizon,
+        )
 
     target: dict[str, float] = {}
     if not ranked.empty:
@@ -186,4 +201,6 @@ def run_live_paper_cycle(
         feature_store=fs,
         score_fn=score_fn,
         max_positions=settings.max_positions,
+        prediction_log=True,
+        model_version=settings.scorer,
     )

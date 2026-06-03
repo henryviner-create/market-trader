@@ -37,6 +37,26 @@ def _seeded_store(symbols: list[str], n_days: int = 120):
     return store, as_of, prices
 
 
+def test_run_paper_cycle_logs_predictions_when_enabled() -> None:
+    from market_trader.feedback.prediction_log import load_predictions
+
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+
+    run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        prediction_log=True,
+        model_version="composite",
+    )
+    assert load_predictions(store, as_of, model_version="composite")  # logged for later grading
+
+
 def test_run_paper_cycle_uses_injected_score_fn() -> None:
     # The pluggable scorer (the seam the forecaster plugs into) must drive
     # selection: a scorer that ranks S3 top makes S3 a winner regardless of features.
