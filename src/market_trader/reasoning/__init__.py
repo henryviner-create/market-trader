@@ -11,7 +11,13 @@ from market_trader.reasoning.briefing import (
     generate_llm_brief,
     render_brief_markdown,
 )
-from market_trader.reasoning.llm import AnthropicProvider, LLMError, LLMProvider, MockLLMProvider
+from market_trader.reasoning.llm import (
+    AnthropicProvider,
+    LLMError,
+    LLMProvider,
+    MockLLMProvider,
+    anthropic_provider_from_settings,
+)
 
 __all__ = [
     "AnthropicProvider",
@@ -19,6 +25,7 @@ __all__ = [
     "LLMError",
     "LLMProvider",
     "MockLLMProvider",
+    "anthropic_provider_from_settings",
     "build_briefing_context",
     "generate_llm_brief",
     "render_brief_markdown",

@@ -12,6 +12,7 @@ import json
 import urllib.request
 from abc import ABC, abstractmethod
 
+from market_trader.config import Settings
 from market_trader.observability import get_logger
 
 _log = get_logger("llm")
@@ -95,3 +96,14 @@ class AnthropicProvider(LLMProvider):
         if not text:
             raise LLMError("Anthropic response contained no text content.")
         return text
+
+
+def anthropic_provider_from_settings(settings: Settings) -> AnthropicProvider:
+    """Build a live Anthropic client from configured settings.
+
+    The key comes from the environment (``MT_ANTHROPIC_API_KEY``) via ``Settings`` —
+    never from the repo or image. Raises :class:`LLMError` if it is not set.
+    """
+    if not settings.anthropic_api_key:
+        raise LLMError("MT_ANTHROPIC_API_KEY is not set; cannot build an Anthropic client")
+    return AnthropicProvider(settings.anthropic_api_key, model=settings.anthropic_model)
