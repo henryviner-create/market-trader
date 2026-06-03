@@ -59,6 +59,9 @@ class Settings(BaseSettings):
     alpaca_key_id: str | None = None
     alpaca_secret_key: str | None = None
     alpaca_paper: bool = True
+    # Market-data feed: "iex" is the free feed; the paid consolidated "sip" feed
+    # 403s on free plans. Override with MT_ALPACA_DATA_FEED=sip once subscribed.
+    alpaca_data_feed: str = "iex"
 
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API

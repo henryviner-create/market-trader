@@ -149,7 +149,7 @@ def run_live_paper_cycle(
     end = date.today()
     start = end - timedelta(days=lookback_days)
     data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
-    records = data.fetch_daily_bars(watchlist, start=start, end=end)
+    records = data.fetch_daily_bars(watchlist, start=start, end=end, feed=settings.alpaca_data_feed)
     IngestionGateway(store).ingest(PriceCollector().normalize(records))
 
     as_of = utcnow()
