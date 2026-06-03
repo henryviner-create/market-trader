@@ -49,9 +49,14 @@ systemctl restart ssh || systemctl restart sshd || true
 curl -fsSL https://get.docker.com | sh
 systemctl enable --now docker
 
-# App: clone, paper .env, systemd unit, bring the stack up
-git clone "$REPO_URL" "$APP_DIR"
-git -C "$APP_DIR" remote set-url origin https://github.com/henryviner-create/market-trader.git  # drop any token from the remote
+# App: clone (retry ~10 min so a brief public-repo window is forgiving), then run
+for i in $(seq 1 30); do
+  if git clone "$REPO_URL" "$APP_DIR"; then break; fi
+  echo "clone attempt $i failed; retrying in 20s — make the repo Public now if it is private"
+  sleep 20
+done
+[ -d "$APP_DIR/.git" ] || { echo "repo clone failed after retries"; exit 1; }
+git -C "$APP_DIR" remote set-url origin https://github.com/henryviner-create/market-trader.git  # drop any token
 chown -R "$USER_NAME:$USER_NAME" "$APP_DIR"
 cp "$APP_DIR/.env.example" "$APP_DIR/.env"  # paper defaults; real keys added later over SSH
 cp "$APP_DIR/deploy/market-trader.service" /etc/systemd/system/market-trader.service
