@@ -65,6 +65,12 @@ class Settings(BaseSettings):
     # the forecaster clears the equal-weight baseline out-of-sample (the
     # `validate-forecaster` command measures this). Forecast = the daily cycle only.
     scorer: str = "composite"
+    # Holding discipline + sizing. exit_band_multiple keeps a held name until it
+    # leaves the top (entry_count * multiple) — so the book holds winners instead
+    # of churning on rank noise (your "it sells too quickly"). risk_weighting:
+    # "inverse_vol" sizes each name to ~equal risk; "equal" splits evenly.
+    exit_band_multiple: float = 2.0
+    risk_weighting: str = "inverse_vol"
 
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never

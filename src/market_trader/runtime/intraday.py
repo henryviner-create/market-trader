@@ -117,6 +117,8 @@ def run_intraday_cycle(
         llm=None,  # no per-minute LLM brief — far under the daily call budget
         top_quantile=settings.intraday_top_quantile,
         max_positions=settings.max_positions,
+        exit_band_multiple=settings.exit_band_multiple,
+        risk_weighting=settings.risk_weighting,
     )
 
 
