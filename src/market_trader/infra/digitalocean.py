@@ -1,17 +1,18 @@
 """DigitalOcean management API client (stdlib urllib; token from env).
 
-Scoped to the non-provisioning operations chosen for this deployment:
+Covers the operations used to provision and operate the box:
 
+* **provisioning** — register SSH key, create/get/list/delete Droplet (with a
+  cloud-init ``user_data`` script). Create/delete are **cost-incurring and
+  destructive** — callers gate them behind explicit confirmation.
 * **monitoring alert policies** (CPU/memory/disk/bandwidth -> email),
 * **on-demand Droplet snapshots** (e.g. before a migration),
 * **Cloud Firewall** management (SSH restricted to your IP, plus 80/443).
 
-There is deliberately **no** Droplet create/resize/destroy here. The token
-(``DO_API_TOKEN``) is a powerful secret — env / secret-manager only, never
-committed. The HTTP transport is injectable, so this is fully unit-tested offline.
-
-Note: a Cloud Firewall can lock you out of SSH if ``ssh_source_ips`` is wrong;
-keep the DigitalOcean web Droplet Console available as a fallback.
+The token (``DO_API_TOKEN``) is a powerful secret — env / secret-manager only,
+never committed. The HTTP transport is injectable, so this is fully unit-tested
+offline. Note: a Cloud Firewall can lock you out of SSH if ``ssh_source_ips`` is
+wrong; keep the DigitalOcean web Droplet Console available as a fallback.
 """
 
 from __future__ import annotations
@@ -155,3 +156,50 @@ class DigitalOceanClient:
 
     def list_firewalls(self) -> list[dict[str, Any]]:
         return self._request("GET", "/v2/firewalls").get("firewalls", [])
+
+    # --- provisioning (create/destroy; cost-incurring + destructive) ----
+    def create_ssh_key(self, *, name: str, public_key: str) -> dict[str, Any]:
+        return self._request(
+            "POST", "/v2/account/keys", {"name": name, "public_key": public_key}
+        ).get("ssh_key", {})
+
+    def list_ssh_keys(self) -> list[dict[str, Any]]:
+        return self._request("GET", "/v2/account/keys").get("ssh_keys", [])
+
+    def create_droplet(
+        self,
+        *,
+        name: str,
+        region: str,
+        size: str,
+        image: str,
+        ssh_key_fingerprints: Sequence[str],
+        user_data: str,
+        backups: bool = True,
+        monitoring: bool = True,
+        ipv6: bool = True,
+        tags: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        body = {
+            "name": name,
+            "region": region,
+            "size": size,
+            "image": image,
+            "ssh_keys": list(ssh_key_fingerprints),
+            "backups": backups,
+            "monitoring": monitoring,
+            "ipv6": ipv6,
+            "user_data": user_data,
+            "tags": list(tags or []),
+        }
+        return self._request("POST", "/v2/droplets", body).get("droplet", {})
+
+    def get_droplet(self, droplet_id: int) -> dict[str, Any]:
+        return self._request("GET", f"/v2/droplets/{droplet_id}").get("droplet", {})
+
+    def list_droplets(self, *, tag: str | None = None) -> list[dict[str, Any]]:
+        path = "/v2/droplets" + (f"?tag_name={tag}" if tag else "")
+        return self._request("GET", path).get("droplets", [])
+
+    def delete_droplet(self, droplet_id: int) -> None:
+        self._request("DELETE", f"/v2/droplets/{droplet_id}")

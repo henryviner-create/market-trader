@@ -80,3 +80,37 @@ def test_list_helpers_unwrap_collections() -> None:
     assert client.list_firewalls() == []
     assert client.list_alert_policies() == []
     assert client.list_snapshots() == []
+
+
+def test_create_ssh_key_request_shape() -> None:
+    transport, calls = _recorder(payload={"ssh_key": {"fingerprint": "aa:bb"}})
+    client = DigitalOceanClient("tok", transport=transport)
+    key = client.create_ssh_key(name="laptop", public_key="ssh-ed25519 AAAA")
+    assert calls[-1]["method"] == "POST" and calls[-1]["url"].endswith("/v2/account/keys")
+    assert calls[-1]["body"] == {"name": "laptop", "public_key": "ssh-ed25519 AAAA"}
+    assert key["fingerprint"] == "aa:bb"
+
+
+def test_create_droplet_request_shape() -> None:
+    transport, calls = _recorder(payload={"droplet": {"id": 99}})
+    client = DigitalOceanClient("tok", transport=transport)
+    client.create_droplet(
+        name="market-trader",
+        region="lon1",
+        size="s-4vcpu-8gb",
+        image="ubuntu-24-04-x64",
+        ssh_key_fingerprints=["aa:bb"],
+        user_data="#!/bin/bash\necho hi",
+        tags=["market-trader"],
+    )
+    body = calls[-1]["body"]
+    assert calls[-1]["url"].endswith("/v2/droplets")
+    assert body["image"] == "ubuntu-24-04-x64" and body["size"] == "s-4vcpu-8gb"
+    assert body["ssh_keys"] == ["aa:bb"] and body["backups"] is True
+    assert body["user_data"].startswith("#!/bin/bash")
+
+
+def test_delete_droplet_uses_delete_method() -> None:
+    transport, calls = _recorder(status=204, payload={})
+    DigitalOceanClient("tok", transport=transport).delete_droplet(99)
+    assert calls[-1]["method"] == "DELETE" and calls[-1]["url"].endswith("/v2/droplets/99")
