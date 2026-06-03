@@ -24,6 +24,7 @@ from market_trader.execution.broker import Broker, Order
 from market_trader.execution.engine import ExecutionEngine
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
+from market_trader.features.news import news_features
 from market_trader.portfolio import RiskLimits, apply_risk_limits
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
 from market_trader.runtime.learning import log_cycle_predictions
@@ -183,6 +184,15 @@ def run_dry_paper_cycle(settings: Settings, *, n_syms: int = 8, n_days: int = 12
     )
 
 
+def _ingest_news(store: BitemporalStore, symbols: list[str], settings: Settings) -> None:
+    """Best-effort: pull recent GDELT articles for the universe and ingest them."""
+    from market_trader.collectors.gdelt import GdeltClient, GdeltNewsCollector
+
+    articles = GdeltClient().fetch_for_symbols(symbols, timespan=settings.news_timespan)
+    if articles:
+        IngestionGateway(store).ingest(GdeltNewsCollector().normalize(articles))
+
+
 def run_live_paper_cycle(
     settings: Settings, *, lookback_days: int = 150, watchlist: list[str] | None = None
 ) -> CycleResult:
@@ -225,7 +235,11 @@ def run_live_paper_cycle(
 
         llm = anthropic_provider_from_settings(settings)
 
-    fs = FeatureStore(store, default_features())
+    features = default_features()
+    if settings.news_enabled:
+        _ingest_news(store, watchlist, settings)  # daily-only: per-symbol fetch is heavy
+        features = features + news_features(settings.news_window_days)
+    fs = FeatureStore(store, features)
     score_fn = build_scorer(settings, store, fs, watchlist, as_of)
     return run_paper_cycle(
         store,

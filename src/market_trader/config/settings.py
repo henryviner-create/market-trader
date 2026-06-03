@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     # "inverse_vol" sizes each name to ~equal risk; "equal" splits evenly.
     exit_band_multiple: float = 2.0
     risk_weighting: str = "inverse_vol"
+    # News signal (daily cycle only; OFF by default). When on, the cycle pulls
+    # recent GDELT articles for the universe and adds news-flow + sentiment
+    # features to the ranking. Per-symbol fetch is heavy, so it's daily, not
+    # intraday. Like every signal, it must earn its keep out-of-sample.
+    news_enabled: bool = False
+    news_window_days: int = 7
+    news_timespan: str = "3d"
 
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
