@@ -28,8 +28,11 @@ from market_trader.portfolio import RiskLimits, apply_risk_limits, composite_sco
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
 from market_trader.storage import InMemoryBitemporalStore
 from market_trader.storage.bitemporal import BitemporalStore
+from market_trader.universe.liquid import MEGACAP_WATCHLIST, resolve_universe
 
-DEFAULT_WATCHLIST = ["AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "JPM", "XOM"]
+# Re-exported for callers/tests; the live default universe is now the broad
+# "liquid" set, chosen via Settings.universe (resolve_universe).
+DEFAULT_WATCHLIST = MEGACAP_WATCHLIST
 
 
 @dataclass
@@ -62,6 +65,7 @@ def run_paper_cycle(
     llm: LLMProvider | None = None,
     feature_store: FeatureStore | None = None,
     top_quantile: float = 0.3,
+    max_positions: int | None = None,
 ) -> CycleResult:
     """Score the universe, form risk-managed target weights, execute on the broker."""
     limits = limits or _limits_from_settings(settings)
@@ -78,6 +82,8 @@ def run_paper_cycle(
     target: dict[str, float] = {}
     if not ranked.empty:
         k = max(1, int(len(ranked) * top_quantile))
+        if max_positions is not None:
+            k = min(k, max_positions)  # cap breadth into a diversified book
         winners = [str(s) for s in ranked.head(k).index]
         raw = {s: 1.0 / len(winners) for s in winners}
         target = apply_risk_limits(raw, limits)
@@ -142,7 +148,7 @@ def run_live_paper_cycle(
     from market_trader.execution.alpaca import AlpacaBroker
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
 
-    watchlist = watchlist or DEFAULT_WATCHLIST
+    watchlist = watchlist or resolve_universe(settings.universe)
     store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
     store.create_schema()  # idempotent
 
@@ -176,4 +182,5 @@ def run_live_paper_cycle(
         broker=broker,
         settings=settings,
         llm=llm,
+        max_positions=settings.max_positions,
     )

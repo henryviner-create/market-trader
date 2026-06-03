@@ -53,6 +53,14 @@ class Settings(BaseSettings):
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
 
+    # --- Universe & portfolio breadth -----------------------------------
+    # `universe` selects what to scan each cycle: "liquid" (broad, ~110 names
+    # across all sectors; default), "watchlist" (the 8 megacaps), or a
+    # comma-separated custom list. `max_positions` caps how many names the book
+    # holds, so breadth yields a diversified portfolio rather than 2-3 megacaps.
+    universe: str = "liquid"
+    max_positions: int = 20
+
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
     # committed. alpaca_paper=true uses the paper endpoints.

@@ -36,6 +36,27 @@ def _seeded_store(symbols: list[str], n_days: int = 120):
     return store, as_of, prices
 
 
+def test_run_paper_cycle_caps_book_size_for_diversification() -> None:
+    # A broad universe must produce a diversified book capped at max_positions,
+    # not 2-3 names — this is what makes universe breadth useful.
+    symbols = [f"S{i}" for i in range(30)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=1_000_000.0)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        top_quantile=0.9,  # 0.9 * 30 = 27 ranked...
+        max_positions=5,  # ...but the cap holds the book to 5
+    )
+    assert len(result.target_weights) == 5
+    assert len(result.orders) == 5 and all(o.side == OrderSide.BUY for o in result.orders)
+
+
 def test_run_paper_cycle_scores_targets_and_fills() -> None:
     symbols = [f"S{i}" for i in range(8)]
     store, as_of, prices = _seeded_store(symbols)
