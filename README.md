@@ -12,11 +12,16 @@ public information and reasoning over it with explicit uncertainty.
 
 | Phase | Scope | State |
 |------:|-------|------|
-| **0** | Foundations: bitemporal store, canonical schema, knowledge-time clock, validation/backtest harness, CI | **complete** |
-| 1 | MVP collectors (EDGAR / FRED / prices / news / congress) + dashboard | next |
-| 2–7 | Signals, market-memory, forecasting, weighting, risk, feedback, 24/7 | planned |
-| 8 | Execution tier — **Alpaca paper only** + all guardrails (graduation gates) | planned |
-| 9 | Gated live consideration — human-approved, low capital ceiling | gated |
+| **0** | Foundations: bitemporal store, knowledge-time clock, validation/backtest harness, CI | **complete** |
+| **1** | Collectors (EDGAR / FRED / prices / GDELT / Congress) + idempotent gateway + data-quality + PIT survivorship universe + dashboard | **complete** |
+| **2** | Signal tier (feature store: technical/flow/regime) + LLM daily briefing | **complete** |
+| **3** | Market-memory: taxonomy, surprise, event-study impact engine, episodic analogs | **complete** |
+| **4** | Forecasting ensemble (logistic + GBT, regime-aware stacking, calibration) + purged-CV/OOS backtest | **complete** |
+| **5** | Weighting (IC/decay/orthogonality) + portfolio/risk (vol-target, Kelly, HRP, limits, breaker) | **complete** |
+| **6** | Synthesis (case-against) + feedback loop (prediction log, drift, pruning, alerts) | **complete** |
+| **7** | 24/7 hardening: metrics, freshness, heartbeat, scheduler, monitoring profile, off-box backups | **complete** |
+| **8** | Execution tier — **Alpaca paper only** + all guardrails | **complete** |
+| 9 | Gated live consideration — human-approved, low capital ceiling | **gated (not enabled)** |
 
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full target design and
 [`DECISIONS.md`](DECISIONS.md) for the rationale behind key choices.
