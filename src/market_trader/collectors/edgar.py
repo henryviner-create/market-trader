@@ -48,6 +48,7 @@ class Form4Collector(Collector):
                     dataset=FORM4_DATASET,
                     entity_type="equity",
                     entity_id=r.issuer_ticker.upper(),
+                    ref=f"{r.insider_name}|{r.transaction_code}",
                     event_time=day_close(r.transaction_date),
                     knowledge_time=day_close(r.filing_date),
                     value={

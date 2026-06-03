@@ -46,6 +46,7 @@ class GdeltNewsCollector(Collector):
                     dataset=NEWS_DATASET,
                     entity_type="equity" if linked else "news_global",
                     entity_id=a.symbol.upper() if linked and a.symbol else "GLOBAL",
+                    ref=a.url or a.title,
                     event_time=seen,
                     knowledge_time=seen,
                     value={"title": a.title, "url": a.url, "source": a.source_name, "tone": a.tone},

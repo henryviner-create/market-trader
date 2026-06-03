@@ -69,6 +69,7 @@ class CongressTradesCollector(Collector):
                     dataset=CONGRESS_DATASET,
                     entity_type="equity",
                     entity_id=r.ticker.upper(),
+                    ref=f"{r.representative}|{r.transaction_type}",
                     event_time=day_close(r.transaction_date),
                     knowledge_time=day_close(r.disclosure_date),
                     value={

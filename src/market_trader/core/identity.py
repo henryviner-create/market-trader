@@ -31,6 +31,7 @@ def deterministic_id(obs: Observation) -> UUID:
             obs.event_time.isoformat(),
             obs.knowledge_time.isoformat(),
             str(obs.revision),
+            obs.ref or "",
         )
     )
     return uuid5(_NAMESPACE, key)

@@ -47,6 +47,7 @@ class ObservationRow(Base):
     dataset: Mapped[str] = mapped_column(String(128), nullable=False)
     entity_type: Mapped[str] = mapped_column(String(64), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    ref: Mapped[str | None] = mapped_column(String(256), nullable=True)
     event_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
     knowledge_time: Mapped[datetime] = mapped_column(DateTime(timezone=False), nullable=False)
     revision: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
@@ -83,6 +84,7 @@ def _to_row(o: Observation) -> ObservationRow:
         dataset=o.dataset,
         entity_type=o.entity_type,
         entity_id=o.entity_id,
+        ref=o.ref,
         event_time=naive_utc(o.event_time),
         knowledge_time=naive_utc(o.knowledge_time),
         revision=o.revision,
@@ -98,6 +100,7 @@ def _to_obs(r: ObservationRow) -> Observation:
         dataset=r.dataset,
         entity_type=r.entity_type,
         entity_id=r.entity_id,
+        ref=r.ref,
         event_time=to_utc_lenient(r.event_time),
         knowledge_time=to_utc_lenient(r.knowledge_time),
         value=dict(r.value),

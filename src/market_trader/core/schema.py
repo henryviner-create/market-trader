@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from market_trader.core.time import ensure_utc, utcnow
 
-LogicalKey = tuple[str, str, str, datetime]
+LogicalKey = tuple[str, str, str, datetime, str | None]
 
 
 class Observation(BaseModel):
@@ -44,6 +44,10 @@ class Observation(BaseModel):
     dataset: str  # e.g. "price.ohlcv", "filing.form4", "macro.series"
     entity_type: str  # e.g. "equity", "macro_series", "person", "option_contract"
     entity_id: str  # e.g. "AAPL", "DGS10", a CIK, an OCC option symbol
+    # Optional source-native discriminator for facts that share bitemporal
+    # coordinates (e.g. two insiders filing on the same dates, two articles the
+    # same day). Participates in identity so they don't collapse into one.
+    ref: str | None = None
     event_time: datetime
     knowledge_time: datetime
     value: dict[str, Any] = Field(default_factory=dict)
@@ -60,4 +64,4 @@ class Observation(BaseModel):
     @property
     def logical_key(self) -> LogicalKey:
         """Identifies the real-world fact this row is a (possibly revised) version of."""
-        return (self.source, self.dataset, self.entity_id, self.event_time)
+        return (self.source, self.dataset, self.entity_id, self.event_time, self.ref)
