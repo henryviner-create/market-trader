@@ -25,7 +25,7 @@ from market_trader.features.regime import macro_regime
 from market_trader.forecasting.dataset import REGIME_FEATURE, build_training_set
 from market_trader.forecasting.models import MomentumBaseline, make_stacking
 from market_trader.forecasting.pipeline import purged_cv_auc, train_forecaster
-from market_trader.portfolio import composite_score, equal_weights
+from market_trader.portfolio import composite_score, equal_weights, ic_weights
 from market_trader.storage.bitemporal import BitemporalStore
 from market_trader.universe import Constituent, PointInTimeUniverse
 
@@ -38,6 +38,26 @@ def composite_scorer() -> ScoreFn:
 
     def score(matrix: pd.DataFrame, _at: datetime) -> pd.Series:
         return composite_score(matrix, equal_weights(matrix.columns))
+
+    return score
+
+
+def ic_weighted_scorer(ic: dict[str, float], *, min_abs_ic: float = 0.0) -> ScoreFn:
+    """Composite weighted by each signal's measured IC, dropping the weak ones.
+
+    Sign-aware (a negative-IC signal is inverted, not discarded) and self-pruning
+    (|IC| < ``min_abs_ic`` -> zero weight). If no signal clears the bar — e.g. a
+    cold start with nothing graded yet — it falls back to the equal-weight
+    composite, so enabling this never *worsens* the baseline.
+    """
+
+    def score(matrix: pd.DataFrame, _at: datetime) -> pd.Series:
+        ics = pd.Series({c: float(ic.get(str(c), 0.0)) for c in matrix.columns}, dtype=float)
+        if min_abs_ic > 0:
+            ics = ics.where(ics.abs() >= min_abs_ic, 0.0)  # auto-prune decayed signals
+        if float(ics.abs().sum()) == 0.0:
+            return composite_score(matrix, equal_weights(matrix.columns))
+        return composite_score(matrix, ic_weights(ics))
 
     return score
 
@@ -96,10 +116,18 @@ def build_scorer(
     feature_store: FeatureStore,
     symbols: list[str],
     as_of: datetime,
+    *,
+    ic: dict[str, float] | None = None,
 ) -> ScoreFn:
-    """Pick the scorer from settings — composite (default) or the trained forecaster."""
+    """Pick the scorer from settings — composite (default) or the trained forecaster.
+
+    When ``ic_weighting`` is on and graded ``ic`` is supplied, the composite is
+    weighted by measured IC instead of equal weights (the learning loop in action).
+    """
     if settings.scorer.strip().lower() == "forecast":
         return forecast_scorer(store, feature_store, symbols, as_of)
+    if settings.ic_weighting and ic:
+        return ic_weighted_scorer(ic, min_abs_ic=settings.ic_min_abs)
     return composite_scorer()
 
 

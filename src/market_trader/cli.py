@@ -123,6 +123,33 @@ def _maybe_start_intraday_loop(settings: Any, log: Any) -> None:
     log.info("intraday_loop_started", interval_seconds=settings.intraday_interval_seconds)
 
 
+def _maybe_start_daily_schedule(settings: Any, log: Any) -> None:
+    """Attach the once-per-trading-day cycle as a daemon thread, if armed.
+
+    OFF unless ``MT_DAILY_CYCLE_ENABLED=true`` and Alpaca keys are present. This is
+    the hands-off path: it fires the end-of-day cycle on the market close, feeding
+    the learning loop. A crash is logged and never takes the health endpoint down.
+    """
+    if not settings.daily_cycle_enabled:
+        return
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        log.warning("daily_schedule_disabled", reason="alpaca keys not set")
+        return
+
+    import threading
+
+    from market_trader.runtime import run_daily_schedule
+
+    def _loop() -> None:
+        try:
+            run_daily_schedule(settings)
+        except Exception as exc:  # surface; keep the health server alive
+            log.error("daily_schedule_crashed", error=str(exc))
+
+    threading.Thread(target=_loop, name="daily-schedule", daemon=True).start()
+    log.info("daily_schedule_started", poll_seconds=settings.daily_cycle_poll_seconds)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
@@ -138,12 +165,14 @@ def cmd_serve(args: argparse.Namespace) -> int:
     signal.signal(signal.SIGINT, _stand_down)
 
     _maybe_start_intraday_loop(settings, log)
+    _maybe_start_daily_schedule(settings, log)
 
     log.info(
         "engine_serving",
         mode=settings.execution_mode,
         live_enabled=settings.live_trading_enabled,
         intraday=settings.intraday_enabled,
+        daily_cycle=settings.daily_cycle_enabled,
         port=args.port,
     )
     server.serve_forever()

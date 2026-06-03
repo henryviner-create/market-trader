@@ -65,6 +65,14 @@ class Settings(BaseSettings):
     # the forecaster clears the equal-weight baseline out-of-sample (the
     # `validate-forecaster` command measures this). Forecast = the daily cycle only.
     scorer: str = "composite"
+    # Close the learning loop: weight the composite's signals by their *measured*
+    # IC (from graded past predictions) instead of equal-weighting, and drop
+    # signals whose |IC| has decayed below ic_min_abs. Sign-aware, so a signal
+    # that predicts the wrong way is inverted, not blindly trusted. Falls back to
+    # equal weights until there is enough graded out-of-sample data, so it is a
+    # no-op on a cold start. Composite scorer only.
+    ic_weighting: bool = True
+    ic_min_abs: float = 0.02
     # Holding discipline + sizing. exit_band_multiple keeps a held name until it
     # leaves the top (entry_count * multiple) — so the book holds winners instead
     # of churning on rank noise (your "it sells too quickly"). risk_weighting:
@@ -105,6 +113,16 @@ class Settings(BaseSettings):
     intraday_momentum_lookback: int = 30
     intraday_meanrev_lookback: int = 10
     intraday_vol_window: int = 30
+
+    # --- Daily scheduler (PAPER; OFF by default) -------------------------
+    # Runs the end-of-day cycle automatically once per *trading day*, triggered by
+    # the market open->closed transition (so weekends/holidays are skipped for
+    # free). This is what feeds the learning loop: every session logs predictions
+    # that grade themselves once their horizon elapses. Enable with
+    # MT_DAILY_CYCLE_ENABLED=true; it runs inside `serve` alongside the health
+    # server. Prefer this over the intraday loop for hands-off operation.
+    daily_cycle_enabled: bool = False
+    daily_cycle_poll_seconds: int = 300  # how often to check for the close
 
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
