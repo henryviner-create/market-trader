@@ -98,9 +98,36 @@ Forecast → Score → Portfolio & Risk (sizing · limits · drawdown breakers)
   is then a **separate, explicit, human-approved** step (Phase 9) that begins in
   a live-dry-run/log-only sub-mode. **The system never enables live on its own.**
 
-## Operations (target)
+## Deployment & operations
 
-Local-first via `docker compose` (Postgres + pgvector). Phase 7 promotes to an
-always-on Linux VM with Prefect orchestration, a Redis/RabbitMQ queue,
-Prometheus + Grafana, data-freshness and drift alerts, `restart: always`
-recovery, secrets management, and cost monitoring with LLM cadence gates.
+Ops is first-class from Phase 0, not bolted on. The engine is a stateful,
+long-running service — **never serverless, never laptop-hosted**.
+
+**Locked infrastructure (D11, D12):**
+
+- **Host:** a persistent **Hetzner CX32** (4 vCPU / 8 GB / ~80 GB NVMe), **Ubuntu
+  24.04 LTS**. EU region is the cost-optimal default (latency is immaterial for
+  swing-horizon US equities). Scale-up trigger: CX42 if intraday / larger
+  universe / heavy scraping / crypto are confirmed.
+- **Runtime:** Docker containers via `docker compose` (Kubernetes is overkill).
+  Services: `db` (Postgres+pgvector), `migrate` (run-once), `engine` (long-running,
+  health-checked). Healthchecks + `depends_on: service_healthy` gate startup;
+  `restart: unless-stopped` + a systemd unit give crash/reboot self-healing.
+- **Production LLM:** the **hosted Anthropic API** (no local LLM/GPU box). Claude
+  Code is dev-time only; the engine calls the API itself on schedule, gated by
+  cadence/cost limits. The key is a managed secret.
+- **Twelve-factor:** config from env, **secrets never in repo/images**, structured
+  JSON logs to stdout.
+
+**Phase 0 baseline (now):** multi-stage non-root `Dockerfile`, `docker-compose`
+(+ prod override), the `market-trader` CLI entrypoint, `.dockerignore`, a
+beginner-friendly `scripts/bootstrap_vps.sh`, the systemd unit, and
+`OPERATIONS.md`.
+
+**Phase 7 hardening:** Prefect orchestration, a Redis/RabbitMQ queue, Prometheus
++ Grafana + Alertmanager and an external heartbeat, data-freshness and drift
+alerts, **automated off-box backups with tested restores**, a Caddy reverse proxy
+(auto-HTTPS) for any public dashboard, and gated CI/CD image build/push/deploy.
+
+See [`OPERATIONS.md`](OPERATIONS.md) for the runbook and the staged VPS
+provisioning walkthrough (delivered when deployment is reached or on request).

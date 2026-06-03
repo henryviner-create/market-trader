@@ -1,0 +1,20 @@
+# systemd unit that brings the whole stack up on boot, so a reboot self-heals
+# unattended. Install on the VPS:
+#   sudo cp deploy/market-trader.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now market-trader
+[Unit]
+Description=market-trader engine (docker compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/market-trader
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f docker-compose.prod.yml down
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

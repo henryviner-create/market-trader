@@ -78,3 +78,33 @@ is even an option. Roadmap change: **Phase 8 = execution tier, paper only**
 starting in a live-dry-run/log-only sub-mode, then a tiny capital ceiling. This
 reverses the interim "wire live early" decision; **no broker scaffold is
 introduced in Phase 2** anymore.
+
+**D11 — Deployment is first-class from Phase 0; 24/7 via auto-recovery.** Adopting
+the deployment add-on module. The engine is a stateful, long-running service —
+**never serverless, never laptop-hosted**. It runs as Docker containers
+orchestrated by `docker compose` (Kubernetes is overkill at single-user scale),
+with per-service healthchecks, `depends_on: service_healthy` gating, named
+volumes, and `restart: unless-stopped`. A systemd unit brings the stack up on
+boot so crashes *and* reboots self-heal unattended. Twelve-factor: config from
+env, **secrets never in the repo or images**, structured JSON logs to stdout.
+The Phase 0 baseline (multi-stage non-root Dockerfile, compose with the
+`migrate`/`engine` services, the `market-trader` CLI entrypoint, `.dockerignore`,
+bootstrap script, `OPERATIONS.md`) is in place now; the full monitoring stack
+(Prometheus/Grafana/Alertmanager + external heartbeat) and **automated off-box
+backups with tested restores** are hardened in Phase 7. A dashboard may later
+deploy separately (e.g. Vercel) reading the DB/API; the engine's control surfaces
+are never publicly reachable.
+
+**D12 — Infrastructure locked: Hetzner CX32 / Ubuntu 24.04 + hosted Anthropic
+API.** Adopting the infrastructure add-on module. Host = a persistent **Hetzner
+Cloud CX32** (4 vCPU / 8 GB / ~80 GB NVMe), **Ubuntu 24.04 LTS** — the cost-
+optimal EU baseline; latency is immaterial for swing-horizon US equities, so we
+do not pay to sit near the broker. Scale-up trigger to **CX42** (8 vCPU / 16 GB)
+only if intraday, a larger universe, heavy scraping, or crypto are confirmed.
+Production reasoning/labelling/synthesis call the **hosted Anthropic API** — **no
+local LLM** on the VPS (avoids an expensive GPU box). Claude Code is a dev-time
+tool, not the production runtime: the deployed engine calls the API itself, on
+schedule, gated by cadence/cost limits with token-usage logging. The Anthropic
+key is a managed, rotatable secret (`MT_ANTHROPIC_API_KEY`), never committed. A
+staged, beginner-friendly provisioning walkthrough is delivered when the
+deployment phase is reached or on request.

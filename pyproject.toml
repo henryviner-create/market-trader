@@ -16,6 +16,14 @@ dependencies = [
     "structlog>=24.1",
 ]
 
+[project.scripts]
+market-trader = "market_trader.cli:main"
+
+[project.optional-dependencies]
+# Dashboard front-end (Phase 1, increment 2). Kept out of the default install and
+# CI so the engine image and test runs stay lean: `uv sync --extra dashboard`.
+dashboard = ["streamlit>=1.36"]
+
 [dependency-groups]
 dev = [
     "pytest>=8.2",

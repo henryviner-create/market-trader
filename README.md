@@ -66,6 +66,21 @@ scripts/         runnable demos
 tests/           unit + bitemporal property + leakage suites
 ```
 
+## Run with Docker / deploy
+
+The engine is containerised and runs the whole stack with one command:
+
+```bash
+docker compose up -d --build     # db + migrations + engine (health-checked)
+curl -s localhost:8080/health    # {"status":"ok","db":true,...}
+```
+
+**Production** runs **paper-first** on a persistent **Hetzner CX32 / Ubuntu 24.04**
+VPS, auto-recovering across crashes and reboots (systemd + `restart` policies).
+The reasoning layer uses the **hosted Anthropic API** (no local LLM). See
+[`OPERATIONS.md`](OPERATIONS.md) for the runbook; a staged, beginner-friendly
+provisioning walkthrough is delivered when you reach deployment or just ask.
+
 ## Execution posture (paper-first, human-gated)
 
 The system is **paper-first**: every default, config, and example defaults to

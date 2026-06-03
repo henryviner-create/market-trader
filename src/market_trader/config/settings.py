@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
 
+    # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
+    # Claude Code is a dev-time tool; the deployed engine calls the hosted API
+    # itself, on schedule. The key is a managed, rotatable secret — never committed.
+    anthropic_api_key: str | None = None
+    anthropic_model: str = "claude-sonnet-4-6"
+    llm_daily_call_budget: int = 200  # cadence/cost gate; enforced in Phase 2+
+
     def assert_live_allowed(self) -> None:
         """Fail closed: live order routing requires *both* explicit switches.
 

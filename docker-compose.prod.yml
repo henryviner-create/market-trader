@@ -1,0 +1,21 @@
+# Production overrides for the VPS. Use together with the base file:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Differences from local: always-restart, no published DB/engine ports (internal
+# only; a reverse proxy fronts anything public in Phase 7), and resource limits.
+services:
+  db:
+    restart: always
+    ports: [] # do not expose the database off-box
+    deploy:
+      resources:
+        limits:
+          memory: 2g
+
+  engine:
+    restart: always
+    ports: [] # reached via the internal network / reverse proxy only
+    deploy:
+      resources:
+        limits:
+          memory: 1g

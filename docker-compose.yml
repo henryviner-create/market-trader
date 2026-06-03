@@ -1,22 +1,76 @@
-# Local infrastructure. Boot the database with: docker compose up -d db
-# Phase 7 extends this file with Redis, Prefect, Prometheus, and Grafana.
+# Local / paper stack. Bring it all up with:  docker compose up -d --build
+# Production adds the prod override (see OPERATIONS.md):
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Phase 7 extends this with Redis, Prefect, Prometheus/Grafana/Alertmanager,
+# and a Caddy reverse proxy (toggled via compose profiles).
+name: market-trader
+
 services:
   db:
     image: pgvector/pgvector:pg16
     environment:
-      POSTGRES_USER: market
-      POSTGRES_PASSWORD: market
-      POSTGRES_DB: market_trader
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: ${POSTGRES_USER:-market}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-market}
+      POSTGRES_DB: ${POSTGRES_DB:-market_trader}
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U market -d market_trader"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-market} -d ${POSTGRES_DB:-market_trader}"]
       interval: 5s
       timeout: 3s
       retries: 10
-    restart: always
+    restart: unless-stopped
+    # Bound to localhost only (never the public internet). Handy for local
+    # inspection; removed entirely by the prod override.
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  # Run-once schema migration. The engine waits for this to complete.
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: market-trader:local
+    command: ["migrate"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MT_DATABASE_URL: ${MT_DATABASE_URL:-postgresql+psycopg://market:market@db:5432/market_trader}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: market-trader:local
+    command: ["serve"]
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      MT_DATABASE_URL: ${MT_DATABASE_URL:-postgresql+psycopg://market:market@db:5432/market_trader}
+      MT_EXECUTION_MODE: ${MT_EXECUTION_MODE:-paper}
+      MT_LIVE_TRADING_ENABLED: ${MT_LIVE_TRADING_ENABLED:-false}
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "market-trader", "healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    restart: unless-stopped
+    # Health/API on localhost only; a reverse proxy (Phase 7) fronts anything public.
+    ports:
+      - "127.0.0.1:8080:8080"
 
 volumes:
   pgdata:
