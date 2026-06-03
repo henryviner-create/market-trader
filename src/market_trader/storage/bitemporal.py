@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from datetime import datetime
 from typing import Protocol, runtime_checkable
+from uuid import UUID
 
 from market_trader.core.schema import LogicalKey, Observation
 from market_trader.core.time import ensure_utc
@@ -58,6 +59,10 @@ class BitemporalStore(Protocol):
 
     def add_many(self, observations: Iterable[Observation]) -> None: ...
 
+    def upsert_many(self, observations: Iterable[Observation]) -> None:
+        """Insert-or-replace by ``observation_id`` (idempotent ingestion)."""
+        ...
+
     def as_of(
         self,
         knowledge_time: datetime,
@@ -73,16 +78,24 @@ class BitemporalStore(Protocol):
 
 
 class InMemoryBitemporalStore:
-    """Reference implementation. Simple, obviously-correct, and the test oracle."""
+    """Reference implementation. Simple, obviously-correct, and the test oracle.
+
+    Backed by a dict keyed on ``observation_id`` so ``upsert_many`` is naturally
+    idempotent; random-id inserts (e.g. synthetic data) never collide.
+    """
 
     def __init__(self) -> None:
-        self._obs: list[Observation] = []
+        self._obs: dict[UUID, Observation] = {}
 
     def add(self, obs: Observation) -> None:
-        self._obs.append(obs)
+        self._obs[obs.observation_id] = obs
 
     def add_many(self, observations: Iterable[Observation]) -> None:
-        self._obs.extend(observations)
+        for o in observations:
+            self._obs[o.observation_id] = o
+
+    def upsert_many(self, observations: Iterable[Observation]) -> None:
+        self.add_many(observations)
 
     def count(self) -> int:
         return len(self._obs)
@@ -98,7 +111,7 @@ class InMemoryBitemporalStore:
         latest_revision_only: bool = True,
     ) -> list[Observation]:
         k = ensure_utc(knowledge_time)
-        rows = [o for o in self._obs if o.knowledge_time <= k]
+        rows = [o for o in self._obs.values() if o.knowledge_time <= k]
         if source is not None:
             rows = [o for o in rows if o.source == source]
         if dataset is not None:

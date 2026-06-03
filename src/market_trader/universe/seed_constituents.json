@@ -1,0 +1,16 @@
+{
+  "_note": "SEED/sample point-in-time universe for Phase 1 — NOT the full S&P 500. Includes delisted names (SIVB, FRC, LEH) so survivorship handling is testable. A survivorship-correct full constituent history is wired in from a data source later. Dates are illustrative.",
+  "constituents": [
+    { "symbol": "AAPL", "name": "Apple Inc.", "added": "1982-11-30", "removed": null },
+    { "symbol": "MSFT", "name": "Microsoft Corporation", "added": "1994-06-01", "removed": null },
+    { "symbol": "AMZN", "name": "Amazon.com Inc.", "added": "2005-11-18", "removed": null },
+    { "symbol": "NVDA", "name": "NVIDIA Corporation", "added": "2001-11-30", "removed": null },
+    { "symbol": "JPM", "name": "JPMorgan Chase & Co.", "added": "1975-06-30", "removed": null },
+    { "symbol": "XOM", "name": "Exxon Mobil Corporation", "added": "1957-03-04", "removed": null },
+    { "symbol": "GE", "name": "General Electric Company", "added": "1907-11-01", "removed": null },
+    { "symbol": "KO", "name": "The Coca-Cola Company", "added": "1957-03-04", "removed": null },
+    { "symbol": "SIVB", "name": "SVB Financial Group", "added": "2017-12-04", "removed": "2023-03-17" },
+    { "symbol": "FRC", "name": "First Republic Bank", "added": "2018-12-20", "removed": "2023-05-01" },
+    { "symbol": "LEH", "name": "Lehman Brothers Holdings Inc.", "added": "1994-09-01", "removed": "2008-09-15" }
+  ]
+}

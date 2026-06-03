@@ -144,6 +144,16 @@ class SqlAlchemyBitemporalStore:
             session.add_all(rows)
             session.commit()
 
+    def upsert_many(self, observations: Iterable[Observation]) -> None:
+        """Insert-or-replace by ``observation_id``. Idempotent across backends."""
+        rows = [_to_row(o) for o in observations]
+        if not rows:
+            return
+        with Session(self._engine) as session:
+            for row in rows:
+                session.merge(row)
+            session.commit()
+
     def count(self) -> int:
         with Session(self._engine) as session:
             return int(session.scalar(select(func.count()).select_from(ObservationRow)) or 0)
