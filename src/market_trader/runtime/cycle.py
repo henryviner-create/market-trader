@@ -25,13 +25,31 @@ from market_trader.execution.engine import ExecutionEngine
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
 from market_trader.features.news import news_features
+from market_trader.observability import get_logger
 from market_trader.portfolio import RiskLimits, apply_risk_limits
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
-from market_trader.runtime.learning import log_cycle_predictions
+from market_trader.runtime.learning import grade_predictions, log_cycle_predictions
 from market_trader.runtime.scoring import ScoreFn, build_scorer, composite_scorer
 from market_trader.storage import InMemoryBitemporalStore
 from market_trader.storage.bitemporal import BitemporalStore
 from market_trader.universe.liquid import MEGACAP_WATCHLIST, resolve_universe
+
+_log = get_logger("cycle")
+
+
+def _measured_signal_ic(
+    store: BitemporalStore, settings: Settings, as_of: datetime
+) -> dict[str, float]:
+    """Per-signal IC from this scorer's own graded predictions — the learning loop.
+
+    Grading uses only outcomes whose horizon has fully elapsed, so this is an
+    out-of-sample read on what has actually worked, fed back into today's weights.
+    """
+    graded = grade_predictions(
+        store, as_of, model_version=settings.scorer, min_abs_ic=settings.ic_min_abs
+    )
+    return {str(k): float(v) for k, v in graded.get("ic", {}).items()}
+
 
 # Re-exported for callers/tests; the live default universe is now the broad
 # "liquid" set, chosen via Settings.universe (resolve_universe).
@@ -240,7 +258,11 @@ def run_live_paper_cycle(
         _ingest_news(store, watchlist, settings)  # daily-only: per-symbol fetch is heavy
         features = features + news_features(settings.news_window_days)
     fs = FeatureStore(store, features)
-    score_fn = build_scorer(settings, store, fs, watchlist, as_of)
+    ic: dict[str, float] | None = None
+    if settings.scorer.strip().lower() == "composite" and settings.ic_weighting:
+        ic = _measured_signal_ic(store, settings, as_of)
+        _log.info("ic_weighting", signals=len(ic), ic={k: round(v, 4) for k, v in ic.items()})
+    score_fn = build_scorer(settings, store, fs, watchlist, as_of, ic=ic)
     return run_paper_cycle(
         store,
         as_of=as_of,
