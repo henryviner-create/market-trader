@@ -91,11 +91,36 @@ def _select_with_hysteresis(
     return [str(s) for s in (selected[:cap] if cap is not None else selected)]
 
 
-def _risk_weights(selected: list[str], matrix: pd.DataFrame, mode: str) -> dict[str, float]:
-    """Inverse-volatility weights (each name ~equal risk) or plain equal weights."""
+def _stop_losses(positions: list, prices: dict[str, float], stop_loss_pct: float) -> set[str]:
+    """Held names down more than ``stop_loss_pct`` from entry — the hard loss floor.
+
+    Absolute (vs the relative rank hysteresis): no matter how strong the signal
+    still looks, a position bleeding past the stop is cut. 0 disables it.
+    """
+    if stop_loss_pct <= 0:
+        return set()
+    out: set[str] = set()
+    for p in positions:
+        px = prices.get(p.symbol)
+        if px and p.avg_price > 0 and p.qty > 0 and (px / p.avg_price - 1.0) <= -stop_loss_pct:
+            out.add(p.symbol)
+    return out
+
+
+def _risk_weights(
+    selected: list[str], matrix: pd.DataFrame, mode: str, scores: pd.Series | None = None
+) -> dict[str, float]:
+    """Size the book: inverse-vol (~equal risk), equal, or conviction (by signal)."""
     n = len(selected)
     if n == 0:
         return {}
+    if mode == "conviction" and scores is not None:
+        s = scores.reindex(selected).astype(float).fillna(0.0)
+        s = s - s.min()  # shift so the weakest selected name anchors at zero
+        s = s + (s.max() * 0.10 if s.max() > 0 else 1.0)  # small floor; still held, just light
+        total = float(s.sum())
+        if total > 0:
+            return {str(k): float(v) / total for k, v in s.items()}
     if mode == "inverse_vol":
         vol_cols = [c for c in matrix.columns if str(c).startswith("vol_")]
         if vol_cols:
@@ -128,6 +153,7 @@ def run_paper_cycle(
     prediction_log: bool = False,
     model_version: str = "composite",
     prediction_horizon: int = 5,
+    stop_loss_pct: float = 0.0,
 ) -> CycleResult:
     """Score the universe, form risk-managed target weights, execute on the broker."""
     limits = limits or _limits_from_settings(settings)
@@ -149,7 +175,11 @@ def run_paper_cycle(
             horizon_days=prediction_horizon,
         )
 
-    held = {p.symbol for p in broker.get_positions()}
+    positions = broker.get_positions()
+    held = {p.symbol for p in positions}
+    stopped = _stop_losses(positions, prices, stop_loss_pct)  # cut losers past the hard floor
+    if stopped:
+        _log.info("stop_loss", names=sorted(stopped))
     target: dict[str, float] = {}
     if not ranked.empty:
         enter_k = max(1, int(len(ranked) * top_quantile))
@@ -157,7 +187,8 @@ def run_paper_cycle(
             enter_k = min(enter_k, max_positions)  # cap breadth into a diversified book
         exit_k = min(len(ranked), max(enter_k, round(enter_k * exit_band_multiple)))
         winners = _select_with_hysteresis(ranked, held, enter_k, exit_k, max_positions)
-        target = apply_risk_limits(_risk_weights(winners, matrix, risk_weighting), limits)
+        winners = [w for w in winners if w not in stopped]  # stop overrides the signal
+        target = apply_risk_limits(_risk_weights(winners, matrix, risk_weighting, ranked), limits)
 
     # Flatten holdings that left the selection: the engine only acts on symbols in
     # the target, so a dropped name needs an explicit 0 (with a price) or it would
@@ -273,9 +304,10 @@ def run_live_paper_cycle(
         llm=llm,
         feature_store=fs,
         score_fn=score_fn,
-        max_positions=settings.max_positions,
+        max_positions=settings.max_positions or None,  # 0 -> uncapped
         exit_band_multiple=settings.exit_band_multiple,
         risk_weighting=settings.risk_weighting,
         prediction_log=True,
         model_version=settings.scorer,
+        stop_loss_pct=settings.stop_loss_pct,
     )

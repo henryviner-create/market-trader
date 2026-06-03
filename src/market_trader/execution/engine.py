@@ -67,6 +67,20 @@ class ExecutionEngine:
             self._audit(as_of, "PORTFOLIO", "halt", {"reason": "drawdown"})
             raise KillSwitchEngaged("drawdown circuit-breaker tripped")
 
+        # Daily-loss kill: stop and require a human re-arm after a hard down day.
+        # Off when max_daily_loss == 0. Compared against the previous close.
+        if self.settings.max_daily_loss > 0 and account.last_equity > 0:
+            day_return = account.equity / account.last_equity - 1.0
+            if day_return <= -self.settings.max_daily_loss:
+                self.kill_switch.engage("daily_loss_limit")
+                self._audit(
+                    as_of,
+                    "PORTFOLIO",
+                    "halt",
+                    {"reason": "daily_loss", "day_return": round(day_return, 4)},
+                )
+                raise KillSwitchEngaged(f"daily loss {day_return:.2%} hit limit")
+
         deployable = min(account.equity, self.settings.capital_ceiling)
         for symbol, weight in target_weights.items():
             others = {k: v for k, v in target_weights.items() if k != symbol}

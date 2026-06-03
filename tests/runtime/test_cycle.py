@@ -57,6 +57,32 @@ def test_run_paper_cycle_logs_predictions_when_enabled() -> None:
     assert load_predictions(store, as_of, model_version="composite")  # logged for later grading
 
 
+def test_stop_loss_flattens_a_losing_holding_even_when_top_ranked() -> None:
+    # A held name that's deep underwater is cut even though the signal loves it —
+    # the absolute loss floor overrides the (relative) rank.
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker({**prices, "S3": prices["S3"] * 2}, starting_cash=100_000.0)
+    broker.submit_order(Order("seed", "S3", OrderSide.BUY, 10.0))  # entry at 2x the mark
+
+    def score(matrix: pd.DataFrame, _at) -> pd.Series:  # rank the loser #1
+        return pd.Series([10.0 if s == "S3" else 1.0 for s in matrix.index], index=matrix.index)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        score_fn=score,
+        top_quantile=0.5,
+        stop_loss_pct=0.10,
+    )
+    assert "S3" not in result.target_weights  # stopped out, not held
+    assert any(o.symbol == "S3" and o.side == OrderSide.SELL for o in result.orders)
+
+
 def test_run_paper_cycle_uses_injected_score_fn() -> None:
     # The pluggable scorer (the seam the forecaster plugs into) must drive
     # selection: a scorer that ranks S3 top makes S3 a winner regardless of features.

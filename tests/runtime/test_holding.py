@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import pandas as pd
 
-from market_trader.runtime.cycle import _risk_weights, _select_with_hysteresis
+from market_trader.execution.broker import Position
+from market_trader.runtime.cycle import _risk_weights, _select_with_hysteresis, _stop_losses
 
 
 def test_hysteresis_holds_names_inside_the_exit_band() -> None:
@@ -32,3 +33,24 @@ def test_inverse_vol_underweights_the_riskier_name() -> None:
     assert w["CALM"] > w["WILD"]  # lower vol -> larger weight
     assert abs(sum(w.values()) - 1.0) < 1e-9
     assert _risk_weights(["CALM", "WILD"], matrix, "equal") == {"CALM": 0.5, "WILD": 0.5}
+
+
+def test_conviction_sizing_bets_more_on_stronger_signals() -> None:
+    matrix = pd.DataFrame(
+        {"mom_60": [0.0, 0.0, 0.0], "vol_20": [0.02, 0.02, 0.02]}, index=["HI", "MID", "LO"]
+    )
+    scores = pd.Series({"HI": 3.0, "MID": 1.0, "LO": 0.5})
+    w = _risk_weights(["HI", "MID", "LO"], matrix, "conviction", scores)
+    assert w["HI"] > w["MID"] > w["LO"]  # bigger bet on the stronger signal
+    assert abs(sum(w.values()) - 1.0) < 1e-9
+
+
+def test_stop_losses_flags_only_holdings_below_the_floor() -> None:
+    positions = [
+        Position("DOWN", 10.0, 100.0),  # entry 100
+        Position("UP", 10.0, 100.0),
+        Position("NEAR", 10.0, 100.0),
+    ]
+    prices = {"DOWN": 85.0, "UP": 110.0, "NEAR": 92.0}  # -15%, +10%, -8%
+    assert _stop_losses(positions, prices, 0.10) == {"DOWN"}  # only the name past -10% is cut
+    assert _stop_losses(positions, prices, 0.0) == set()  # disabled

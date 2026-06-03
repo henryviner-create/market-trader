@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import date
 from typing import Literal
 
@@ -24,6 +25,7 @@ from market_trader.execution import (
     reconcile,
     sanity_check_order,
 )
+from market_trader.execution.broker import Account
 from market_trader.portfolio import RiskLimits
 from market_trader.storage import InMemoryBitemporalStore
 
@@ -140,6 +142,55 @@ def test_halt_and_flatten_closes_positions() -> None:
     engine.halt_and_flatten({"A": 100.0}, as_of=T2)
     assert broker.get_positions() == []
     assert engine.kill_switch.engaged
+
+
+class _AcctBroker:
+    """Minimal broker exposing a fixed Account — for the daily-loss kill tests."""
+
+    def __init__(self, equity: float, last_equity: float) -> None:
+        self._acct = Account(equity, equity, equity, last_equity=last_equity)
+        self.submitted: list[Order] = []
+
+    def get_account(self) -> Account:
+        return self._acct
+
+    def get_positions(self) -> list[Position]:
+        return []
+
+    def get_open_orders(self) -> list[Order]:
+        return []
+
+    def submit_order(self, order: Order) -> Order:
+        self.submitted.append(order)
+        return replace(order, status=OrderStatus.FILLED, filled_qty=order.qty)
+
+    def cancel_order(self, client_order_id: str) -> None:
+        pass
+
+
+def test_daily_loss_limit_halts_and_engages_kill_switch() -> None:
+    broker = _AcctBroker(equity=93_000.0, last_equity=100_000.0)  # -7% on the day
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=100_000.0,
+        max_daily_loss=0.05,
+        max_drawdown_halt=0.9,  # high, so the daily-loss rail is what trips
+        max_orders_per_interval=50,
+    )
+    engine = ExecutionEngine(
+        broker,
+        settings=settings,
+        limits=RiskLimits(max_position_weight=1.0, max_gross_exposure=1.0),
+    )
+    with pytest.raises(KillSwitchEngaged):
+        engine.rebalance({"AAPL": 0.5}, {"AAPL": 100.0}, as_of=T)
+    assert engine.kill_switch.engaged and not broker.submitted  # halted before any order
+
+
+def test_daily_loss_limit_off_by_default_lets_a_down_day_trade() -> None:
+    broker = _AcctBroker(equity=60_000.0, last_equity=100_000.0)  # -40%, but limit disabled
+    orders = _engine(broker, ceiling=100_000.0).rebalance({"AAPL": 0.5}, {"AAPL": 100.0}, as_of=T)
+    assert orders and broker.submitted  # default max_daily_loss=0 -> no daily halt
 
 
 def test_reconcile_detects_divergence() -> None:
