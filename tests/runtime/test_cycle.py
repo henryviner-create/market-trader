@@ -14,7 +14,7 @@ import pytest
 
 from market_trader.config import Settings
 from market_trader.core.synthetic import PRICE_DATASET, synthetic_price_observations
-from market_trader.execution.broker import OrderStatus
+from market_trader.execution.broker import Order, OrderSide, OrderStatus
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.reasoning import MockLLMProvider
 from market_trader.runtime import run_dry_paper_cycle, run_live_paper_cycle, run_paper_cycle
@@ -81,7 +81,40 @@ def test_run_dry_paper_cycle_is_self_contained() -> None:
     assert result.brief is None  # the dry path wires no LLM
 
 
+def test_run_paper_cycle_flattens_holdings_that_drop_out() -> None:
+    # A name held from a prior cycle but no longer selected must be sold, or it
+    # would linger on the persistent account (rebalance only acts on the target).
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    prices = {**prices, "STALE": 50.0}  # not in the scored universe
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+    broker.submit_order(Order("seed", "STALE", OrderSide.BUY, 10.0))  # already held
+    assert "STALE" in {p.symbol for p in broker.get_positions()}
+
+    result = run_paper_cycle(
+        store, as_of=as_of, symbols=symbols, prices=prices, broker=broker, settings=PAPER
+    )
+
+    assert "STALE" not in {p.symbol for p in broker.get_positions()}  # flattened to zero
+    assert any(o.symbol == "STALE" and o.side == OrderSide.SELL for o in result.orders)
+    assert "STALE" not in result.target_weights  # not part of the desired portfolio
+
+
 def test_run_live_paper_cycle_requires_keys() -> None:
     no_keys = Settings(execution_mode="paper", alpaca_key_id=None, alpaca_secret_key=None)
     with pytest.raises(RuntimeError):  # fails fast, before any network call
         run_live_paper_cycle(no_keys)
+
+
+def test_run_live_paper_cycle_refuses_live_endpoint_unless_armed() -> None:
+    # Keys present + MT_ALPACA_PAPER=false asks for the LIVE endpoint, but live
+    # trading isn't armed (execution_mode=paper) => fail closed before any I/O.
+    wants_live_endpoint = Settings(
+        execution_mode="paper",
+        live_trading_enabled=False,
+        alpaca_key_id="k",
+        alpaca_secret_key="s",
+        alpaca_paper=False,
+    )
+    with pytest.raises(RuntimeError):
+        run_live_paper_cycle(wants_live_endpoint)
