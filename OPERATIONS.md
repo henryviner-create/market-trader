@@ -4,11 +4,12 @@ Plain-English operations for running market-trader **paper-first** on a single
 Linux VPS. Every command is copy-pasteable. Run them from the repo directory on
 the VPS (`/opt/market-trader`).
 
-> **Maturity note.** The Phase 0 ops baseline (container, compose, healthchecks,
-> boot recovery, manual backups) is in place now. The full monitoring/alerting
-> stack (Prometheus/Grafana/Alertmanager + external heartbeat) and **automated
-> off-box backups** are hardened in **Phase 7**; where a section depends on those,
-> it says so and gives the manual equivalent you can use today.
+> **Maturity note.** Phase 0 baseline + Phase 7 hardening are in place: a
+> `/metrics` endpoint, data-freshness + heartbeat monitoring, a `monitoring`
+> compose profile (Prometheus + Grafana, localhost-bound), and off-box
+> backup/restore scripts (`scripts/backup_db.sh`, `scripts/restore_db.sh`). Start
+> monitoring with `docker compose --profile monitoring up -d` (Grafana on
+> localhost:3000). Alertmanager routing rules are the remaining polish.
 
 ## Topology
 

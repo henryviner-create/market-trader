@@ -108,3 +108,14 @@ schedule, gated by cadence/cost limits with token-usage logging. The Anthropic
 key is a managed, rotatable secret (`MT_ANTHROPIC_API_KEY`), never committed. A
 staged, beginner-friendly provisioning walkthrough is delivered when the
 deployment phase is reached or on request.
+
+**D13 — 24/7 hardening: observability, scheduling, backups (Phase 7).** In-house
+Prometheus-format metrics served at ``/metrics`` keep the engine image
+dependency-free; **data-freshness** monitoring catches a silent feed; an external
+**heartbeat** covers a fully-dead box. A lightweight cadence-tier scheduler
+(``JobRegistry``) decides which jobs are due — idempotent, with an explicit
+catch-up policy; Prefect/Dagster wrap it for observable DAGs in production.
+**Off-box backups** via ``scripts/backup_db.sh`` with a tested restore
+(``scripts/restore_db.sh``); back up before every migration. Prometheus + Grafana
+run behind a compose ``monitoring`` profile (opt-in, bound to localhost).
+Alertmanager routing rules are the remaining polish.

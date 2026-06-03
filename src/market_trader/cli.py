@@ -28,6 +28,7 @@ from sqlalchemy import create_engine, text
 from market_trader import __version__
 from market_trader.config import get_settings
 from market_trader.observability import configure_logging, get_logger
+from market_trader.observability.metrics import default_registry
 
 
 def check_database(url: str, *, timeout: float = 5.0) -> bool:
@@ -57,17 +58,23 @@ class _HealthServer(ThreadingHTTPServer):
 
 class _HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
-        if self.path.rstrip("/") in ("", "/health"):
+        path = self.path.rstrip("/")
+        if path in ("", "/health"):
             payload = health_payload(cast(_HealthServer, self.server).db_url)
-            body = json.dumps(payload).encode()
-            self.send_response(200 if payload["db"] else 503)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
+            self._respond(200 if payload["db"] else 503, "application/json", json.dumps(payload))
+        elif path == "/metrics":
+            self._respond(200, "text/plain; version=0.0.4", default_registry().render())
         else:
             self.send_response(404)
             self.end_headers()
+
+    def _respond(self, status: int, content_type: str, text: str) -> None:
+        body = text.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def log_message(self, *args: Any) -> None:  # keep the health endpoint quiet
         return
@@ -89,6 +96,7 @@ def cmd_migrate(_: argparse.Namespace) -> int:
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
+    default_registry().gauge("mt_up", "engine process up (1)").set(1.0)
     log = get_logger("engine")
     server = _HealthServer(("0.0.0.0", args.port), settings.database_url)
 
