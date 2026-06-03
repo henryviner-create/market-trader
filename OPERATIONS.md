@@ -21,11 +21,13 @@ the VPS (`/opt/market-trader`).
 All services run via `docker compose`. The engine never begins trading until the
 database is healthy and migrations have completed.
 
-## First-time setup (fresh VPS)
+## First-time setup (fresh Droplet)
 
-Target box: a **Hetzner CX32** (4 vCPU / 8 GB / ~80 GB NVMe) running **Ubuntu
-24.04 LTS** (any Debian/Ubuntu works). Enable Hetzner's automated backups when
-creating the server (~20% surcharge) in addition to the off-box dumps below.
+Target box: a **DigitalOcean Basic Droplet** (4 vCPU / 8 GB / NVMe, Premium
+AMD/Intel preferred) running **Ubuntu 24.04 LTS** (any Debian/Ubuntu works).
+Enable **two backup layers**: DigitalOcean automated backups (weekly,
+whole-server rollback) *and* the off-box `pg_dump` -> Spaces/S3 dumps below
+(granular data recovery). Enable DO's metrics agent + Monitoring.
 
 ```bash
 # As root on a fresh Ubuntu 24.04 box:
@@ -39,10 +41,11 @@ sudo systemctl restart market-trader
 `bootstrap_vps.sh` is idempotent and defaults to **paper**. It never enables live
 trading.
 
-> **Prefer a guided, click-by-click version?** Ask Claude for the **staged VPS
-> provisioning walkthrough** — it covers creating the Hetzner server, SSH keys,
-> hardening, secrets, bring-up, reboot/auto-recovery proof, and backups, one
-> confirmable stage at a time, assuming no prior server experience.
+> **Prefer a guided, click-by-click version?** Ask Claude for the **staged
+> DigitalOcean provisioning walkthrough** — it covers creating the Droplet, SSH
+> keys, first-login hardening, secrets, bring-up, reboot/auto-recovery proof, and
+> backups (incl. off-box to Spaces), one confirmable stage at a time, assuming no
+> prior server experience.
 
 ## Deploy / redeploy
 

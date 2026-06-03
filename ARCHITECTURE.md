@@ -105,10 +105,11 @@ long-running service — **never serverless, never laptop-hosted**.
 
 **Locked infrastructure (D11, D12):**
 
-- **Host:** a persistent **Hetzner CX32** (4 vCPU / 8 GB / ~80 GB NVMe), **Ubuntu
-  24.04 LTS**. EU region is the cost-optimal default (latency is immaterial for
-  swing-horizon US equities). Scale-up trigger: CX42 if intraday / larger
-  universe / heavy scraping / crypto are confirmed.
+- **Host:** a persistent **DigitalOcean Basic Droplet** (4 vCPU / 8 GB / NVMe,
+  Premium AMD/Intel preferred), **Ubuntu 24.04 LTS**, region nearest the operator
+  (latency is immaterial). Scale-up trigger: a ≥16 GB Droplet if intraday / larger
+  universe / heavy scraping / crypto are confirmed. Avoid DO App Platform and GPU
+  Droplets.
 - **Runtime:** Docker containers via `docker compose` (Kubernetes is overkill).
   Services: `db` (Postgres+pgvector), `migrate` (run-once), `engine` (long-running,
   health-checked). Healthchecks + `depends_on: service_healthy` gate startup;

@@ -95,19 +95,24 @@ backups with tested restores** are hardened in Phase 7. A dashboard may later
 deploy separately (e.g. Vercel) reading the DB/API; the engine's control surfaces
 are never publicly reachable.
 
-**D12 — Infrastructure locked: Hetzner CX32 / Ubuntu 24.04 + hosted Anthropic
-API.** Adopting the infrastructure add-on module. Host = a persistent **Hetzner
-Cloud CX32** (4 vCPU / 8 GB / ~80 GB NVMe), **Ubuntu 24.04 LTS** — the cost-
-optimal EU baseline; latency is immaterial for swing-horizon US equities, so we
-do not pay to sit near the broker. Scale-up trigger to **CX42** (8 vCPU / 16 GB)
-only if intraday, a larger universe, heavy scraping, or crypto are confirmed.
-Production reasoning/labelling/synthesis call the **hosted Anthropic API** — **no
-local LLM** on the VPS (avoids an expensive GPU box). Claude Code is a dev-time
-tool, not the production runtime: the deployed engine calls the API itself, on
+**D12 — Infrastructure locked: DigitalOcean Droplet / Ubuntu 24.04 + hosted
+Anthropic API.** (Supersedes the earlier Hetzner decision — DigitalOcean was
+chosen for its gentler setup UX: password-auth option, browser recovery console,
+strong docs.) Host = a persistent **DigitalOcean Basic (shared-CPU) Droplet,
+4 vCPU / 8 GB / NVMe** (Premium AMD/Intel preferred), **Ubuntu 24.04 LTS**, region
+nearest the operator (latency is immaterial). Scale-up trigger: a larger Droplet
+(≥16 GB) only if intraday, a larger universe, heavy scraping, or crypto are
+confirmed. **Two backup layers (both required):** DigitalOcean automated backups
+(weekly, whole-server image rollback) **and** off-box `pg_dump` to DigitalOcean
+Spaces / S3 (frequent, granular point-in-time data recovery). **Avoid** DO App
+Platform (stateless PaaS, wrong for a stateful 24/7 engine) and GPU Droplets
+(unnecessary — we use the hosted API). Production reasoning/labelling/synthesis
+call the **hosted Anthropic API** — **no local LLM** (avoids a GPU box). Claude
+Code is a dev-time tool, not the runtime: the engine calls the API itself, on
 schedule, gated by cadence/cost limits with token-usage logging. The Anthropic
 key is a managed, rotatable secret (`MT_ANTHROPIC_API_KEY`), never committed. A
-staged, beginner-friendly provisioning walkthrough is delivered when the
-deployment phase is reached or on request.
+staged, beginner-friendly DigitalOcean provisioning walkthrough is delivered when
+the deployment phase is reached or on request.
 
 **D13 — 24/7 hardening: observability, scheduling, backups (Phase 7).** In-house
 Prometheus-format metrics served at ``/metrics`` keep the engine image

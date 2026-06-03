@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# One-command bootstrap for a fresh Hetzner Cloud CX32 running Ubuntu 24.04 LTS
+# One-command bootstrap for a fresh DigitalOcean Droplet running Ubuntu 24.04 LTS
 # (works on any Debian/Ubuntu box). Idempotent: safe to re-run. Sets up time/UTC,
 # swap, security updates, Docker, a firewall, fail2ban, the systemd boot unit, and
 # brings the PAPER stack up.
@@ -91,7 +91,7 @@ Recommended next (do once key login works — do NOT lock yourself out):
   * Create a non-root sudo user and add your SSH public key to it.
   * Then in /etc/ssh/sshd_config set:  PasswordAuthentication no   (and: systemctl reload ssh)
 
-For a guided, click-by-click version of all of this (creating the Hetzner server,
+For a guided, click-by-click version of all of this (creating the Droplet,
 SSH keys, secrets), ask Claude for the staged provisioning walkthrough.
 See OPERATIONS.md for the full runbook (deploy, backups, alerts, incident response).
 NEXT

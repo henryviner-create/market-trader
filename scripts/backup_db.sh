@@ -16,9 +16,11 @@ docker compose exec -T db pg_dump -U "${POSTGRES_USER:-market}" "${POSTGRES_DB:-
   | gzip > "$FILE"
 echo "wrote $FILE ($(du -h "$FILE" | cut -f1))"
 
-# Ship OFF-box (configure ONE — this is the part that makes it a real backup):
-#   rclone copy "$FILE" remote:market-trader-backups/
-#   aws s3 cp "$FILE" s3://YOUR_BUCKET/market-trader/
+# Ship OFF-box (configure ONE — this is the part that makes it a real backup).
+# DigitalOcean Spaces (S3-compatible) using the AWS CLI + the .env keys:
+#   aws s3 cp "$FILE" "s3://${SPACES_BUCKET}/market-trader/" --endpoint-url "$SPACES_ENDPOINT"
+# Or rclone:
+#   rclone copy "$FILE" spaces:${SPACES_BUCKET}/market-trader/
 
 # Local retention: keep the most recent 14.
 ls -1t "$DEST"/market_trader_*.sql.gz 2>/dev/null | tail -n +15 | xargs -r rm -f
