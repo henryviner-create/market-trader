@@ -82,6 +82,16 @@ class PaperBroker:
     def get_positions(self) -> list[Position]:
         return list(self._positions.values())
 
+    def get_open_orders(self) -> list[Order]:
+        """Orders still working (e.g. resting limits); filled/terminal ones excluded."""
+        open_states = (
+            OrderStatus.NEW,
+            OrderStatus.SUBMITTED,
+            OrderStatus.ACCEPTED,
+            OrderStatus.PARTIALLY_FILLED,
+        )
+        return [o for o in self._orders.values() if o.status in open_states]
+
     def get_account(self) -> Account:
         market_value = sum(
             p.qty * self._prices.get(p.symbol, p.avg_price) for p in self._positions.values()

@@ -8,19 +8,25 @@ from datetime import datetime
 import pandas as pd
 
 from market_trader.backtest.pit import StorePriceView
+from market_trader.core.synthetic import PRICE_DATASET
 from market_trader.features.base import Feature
 from market_trader.storage.bitemporal import BitemporalStore
+
+# Features read whichever price dataset they are pointed at, so the same maths run
+# on daily bars (default) or on the minute dataset for intraday signals — there a
+# ``lookback`` counts minutes, not days.
 
 
 class Momentum(Feature):
     family = "technical"
 
-    def __init__(self, lookback: int = 60) -> None:
+    def __init__(self, lookback: int = 60, *, dataset: str = PRICE_DATASET) -> None:
         self.lookback = lookback
+        self.dataset = dataset
         self.name = f"mom_{lookback}"
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
-        panel = StorePriceView(store, as_of).price_panel()
+        panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
         if panel.empty or panel.shape[0] < self.lookback + 1:
             return pd.Series(index=list(symbols), dtype=float)
         p = panel.ffill()
@@ -31,12 +37,13 @@ class Momentum(Feature):
 class MeanReversion(Feature):
     family = "technical"
 
-    def __init__(self, lookback: int = 5) -> None:
+    def __init__(self, lookback: int = 5, *, dataset: str = PRICE_DATASET) -> None:
         self.lookback = lookback
+        self.dataset = dataset
         self.name = f"meanrev_{lookback}"
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
-        panel = StorePriceView(store, as_of).price_panel()
+        panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
         if panel.empty or panel.shape[0] < self.lookback + 1:
             return pd.Series(index=list(symbols), dtype=float)
         p = panel.ffill()
@@ -47,12 +54,13 @@ class MeanReversion(Feature):
 class Volatility(Feature):
     family = "technical"
 
-    def __init__(self, window: int = 20) -> None:
+    def __init__(self, window: int = 20, *, dataset: str = PRICE_DATASET) -> None:
         self.window = window
+        self.dataset = dataset
         self.name = f"vol_{window}"
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
-        returns = StorePriceView(store, as_of).returns_panel()
+        returns = StorePriceView(store, as_of, dataset=self.dataset).returns_panel()
         if returns.empty:
             return pd.Series(index=list(symbols), dtype=float)
         vol = returns.tail(self.window).std(ddof=0)

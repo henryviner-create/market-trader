@@ -73,6 +73,13 @@ class ExecutionEngine:
             check_order(symbol, weight, others, self.limits)  # refuses over-limit targets
 
         positions = {p.symbol: p.qty for p in self.broker.get_positions()}
+        # Count still-open orders as effective holdings: without this, a re-run
+        # before the prior order fills would see a stale (zero) position and
+        # double-submit. Crucial for the intraday loop, harmless for daily.
+        for pending in self.broker.get_open_orders():
+            remaining = pending.qty - pending.filled_qty
+            signed = remaining if pending.side == OrderSide.BUY else -remaining
+            positions[pending.symbol] = positions.get(pending.symbol, 0.0) + signed
         orders: list[Order] = []
         for symbol, weight in target_weights.items():
             price = prices.get(symbol)
