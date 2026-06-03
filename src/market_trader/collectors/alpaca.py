@@ -55,9 +55,20 @@ class AlpacaDataClient:
         self._get = transport or _urllib_get
 
     def fetch_daily_bars(
-        self, symbols: Sequence[str], *, start: date, end: date, adjustment: str = "all"
+        self,
+        symbols: Sequence[str],
+        *,
+        start: date,
+        end: date,
+        adjustment: str = "all",
+        feed: str = "iex",
     ) -> list[dict[str, Any]]:
-        """Daily OHLCV bars per symbol, as PriceBar-shaped records."""
+        """Daily OHLCV bars per symbol, as PriceBar-shaped records.
+
+        ``feed`` defaults to ``iex`` (the free market-data feed). The paid
+        consolidated ``sip`` feed 403s on free plans ("subscription does not
+        permit querying recent SIP data"), so it must be opted into explicitly.
+        """
         query = urllib.parse.urlencode(
             {
                 "symbols": ",".join(symbols),
@@ -65,6 +76,7 @@ class AlpacaDataClient:
                 "start": start.isoformat(),
                 "end": end.isoformat(),
                 "adjustment": adjustment,
+                "feed": feed,
                 "limit": 10000,
             }
         )

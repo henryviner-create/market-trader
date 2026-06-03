@@ -68,6 +68,7 @@ def test_fetch_daily_bars_shape_and_query() -> None:
     assert len(records) == 3  # 2 AAPL + 1 MSFT
     assert "symbols=AAPL%2CMSFT" in calls[0]  # comma-joined + URL-encoded
     assert "timeframe=1Day" in calls[0]
+    assert "feed=iex" in calls[0]  # free feed by default; sip 403s on free plans
 
     aapl = next(r for r in records if r["symbol"] == "AAPL")
     assert aapl["date"] == "2023-06-01"
@@ -88,6 +89,13 @@ def test_records_flow_through_price_collector() -> None:
     aapl = [o for o in observations if o.entity_id == "AAPL"]
     assert len(aapl) == 2
     assert all(o.knowledge_time == o.event_time for o in aapl)  # known at the close
+
+
+def test_feed_is_overridable() -> None:
+    transport, calls = _transport()
+    client = AlpacaDataClient("k", "s", transport=transport)
+    client.fetch_daily_bars(["AAPL"], start=date(2023, 6, 1), end=date(2023, 6, 3), feed="sip")
+    assert "feed=sip" in calls[0]  # paid plans can opt back into the consolidated feed
 
 
 def test_http_error_status_raises() -> None:
