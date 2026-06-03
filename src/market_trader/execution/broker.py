@@ -52,6 +52,8 @@ class Position:
     symbol: str
     qty: float
     avg_price: float
+    market_value: float = 0.0
+    unrealized_pl: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,7 @@ class Account:
     equity: float
     cash: float
     buying_power: float
+    last_equity: float = 0.0  # equity at the previous close -> today's P&L = equity - last_equity
 
 
 @runtime_checkable
