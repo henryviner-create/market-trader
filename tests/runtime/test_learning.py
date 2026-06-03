@@ -42,11 +42,11 @@ def test_log_and_grade_predictions_roundtrip() -> None:
     assert isinstance(res["ic"], dict) and res["ic"]  # per-signal IC computed
 
 
-def test_grade_is_empty_until_the_horizon_elapses() -> None:
+def test_grade_requires_the_full_horizon() -> None:
     symbols = [f"S{i}" for i in range(6)]
     store, dates = _store(symbols)
-    latest = dates[-1]
-    scores, matrix = _scores(store, latest, symbols)
-    # Logged at the very last bar -> no forward returns exist yet to grade against.
-    log_cycle_predictions(store, scores, matrix, latest, model_version="test")
-    assert grade_predictions(store, latest, model_version="test", horizon_days=5)["n"] == 0
+    partial = dates[-3]  # only 2 bars ahead; the 5-day horizon hasn't elapsed
+    scores, matrix = _scores(store, partial, symbols)
+    log_cycle_predictions(store, scores, matrix, partial, model_version="test")
+    # Must not grade against a half-formed window -> no fake numbers on fresh logs.
+    assert grade_predictions(store, dates[-1], model_version="test", horizon_days=5)["n"] == 0
