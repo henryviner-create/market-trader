@@ -11,6 +11,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pandas as pd
+
 from market_trader.backtest.pit import observations_to_price_frame
 from market_trader.collectors.alpaca import AlpacaDataClient
 from market_trader.collectors.intraday import intraday_bars_to_observations
@@ -75,6 +77,7 @@ def test_intraday_bars_become_minute_resolution_panel() -> None:
     assert all(o.event_time == o.knowledge_time for o in obs)  # knowable once the minute closes
 
     panel = observations_to_price_frame(obs)
-    # Three distinct minute timestamps -> three panel rows (not collapsed to a day).
-    assert list(panel.index.minute) == [30, 31, 32]
+    idx = panel.index
+    assert isinstance(idx, pd.DatetimeIndex)  # minute timestamps, not collapsed to a day
+    assert list(idx.minute) == [30, 31, 32]  # three distinct minutes -> three rows
     assert float(panel["AAPL"].iloc[-1]) == 182.5
