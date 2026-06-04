@@ -565,15 +565,21 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
-    from market_trader.core.time import utcnow
+    from market_trader.core.time import DISTANT_FUTURE, utcnow
     from market_trader.features import FeatureStore, default_features
     from market_trader.runtime.signal_ic import measure_signal_ic
+    from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
     from market_trader.universe.liquid import resolve_universe
 
     try:
-        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
-        store.create_schema()
+        db = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        db.create_schema()
+        # Load the store into memory ONCE so per-date feature computation doesn't
+        # re-query the DB at every sampled date (the O(dates x history) trap that
+        # made this — and the backtest — crawl). One pass over all datasets.
+        store = InMemoryBitemporalStore()
+        store.add_many(db.as_of(DISTANT_FUTURE))
         fs = FeatureStore(store, default_features())
         ics = measure_signal_ic(
             store,
