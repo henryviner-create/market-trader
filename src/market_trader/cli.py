@@ -472,7 +472,11 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     from market_trader.backtest.engine import buy_and_hold_summary, run_backtest
     from market_trader.backtest.pit import observations_to_price_frame
     from market_trader.backtest.simulation import monte_carlo_report
-    from market_trader.backtest.strategies import CompositeBacktestStrategy, EqualWeightStrategy
+    from market_trader.backtest.strategies import (
+        CompositeBacktestStrategy,
+        EqualWeightStrategy,
+        VolTargetedStrategy,
+    )
     from market_trader.collectors import IngestionGateway, PriceCollector
     from market_trader.collectors.alpaca import AlpacaDataClient
     from market_trader.collectors.edgar import FORM4_DATASET
@@ -514,10 +518,12 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         tilted = CompositeBacktestStrategy(
             max_positions=max_pos, insider_scores=insider_scores, name="composite+insider"
         )
-        result = run_backtest(store, tilted, schedule)  # report Monte-Carlo on the candidate
+        governed = VolTargetedStrategy(tilted, target_vol=settings.target_vol, name="+insider@vol")
+        result = run_backtest(store, governed, schedule)  # Monte-Carlo on the governed candidate
         summaries = {
             base.name: run_backtest(store, base, schedule).summary,
-            tilted.name: result.summary,
+            tilted.name: run_backtest(store, tilted, schedule).summary,
+            governed.name: result.summary,
             "equal_weight": run_backtest(store, EqualWeightStrategy(), schedule).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
         }
@@ -529,14 +535,20 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     print(f"simulate [{len(schedule)} rebalances over ~{args.days}d, net of costs]")
     for name, s in summaries.items():
         print(
-            f"  {name:18} ann_return={s.ann_return:+.1%}  sharpe={s.sharpe:+.2f}  "
+            f"  {name:20} ann={s.ann_return:+.1%}  vol={s.ann_vol:.1%}  sharpe={s.sharpe:+.2f}  "
             f"max_dd={s.max_drawdown:.1%}  hit={s.hit_rate:.0%}"
         )
-    ins_s, base_s = summaries["composite+insider"], summaries["composite"]
+    base_s = summaries["composite"]
+    tilt_s = summaries["composite+insider"]
+    gov_s = summaries["+insider@vol"]
     print(
-        f"  insider effect: sharpe {ins_s.sharpe - base_s.sharpe:+.2f}, "
-        f"max_dd {ins_s.max_drawdown - base_s.max_drawdown:+.1%} (+ = shallower), "
-        f"ann_return {ins_s.ann_return - base_s.ann_return:+.1%}"
+        f"  insider effect: sharpe {tilt_s.sharpe - base_s.sharpe:+.2f}, "
+        f"ann_return {tilt_s.ann_return - base_s.ann_return:+.1%} (no DD cost)"
+    )
+    print(
+        f"  risk governor: vol {tilt_s.ann_vol:.0%}->{gov_s.ann_vol:.0%} (target "
+        f"{settings.target_vol:.0%}), max_dd {tilt_s.max_drawdown:.0%}->{gov_s.max_drawdown:.0%} "
+        f"(cap 25%)"
     )
     print(
         f"  Monte-Carlo ({sim.n_sims} paths): total return q05/q50/q95 = "
