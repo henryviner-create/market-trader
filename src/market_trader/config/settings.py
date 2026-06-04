@@ -134,6 +134,27 @@ class Settings(BaseSettings):
     daily_cycle_enabled: bool = False
     daily_cycle_poll_seconds: int = 300  # how often to check for the close
 
+    # --- Event-driven news sleeve (PAPER; OFF by default) ----------------
+    # A selective, event-triggered overlay: when a name gets *material* news, open
+    # a small, time-boxed position to ride the post-news drift, then exit. Runs in
+    # `serve` when MT_NEWS_SLEEVE_ENABLED=true. Non-churning by design — it acts
+    # only on a fresh, deduped story, then holds for a fixed window. It coexists
+    # with the daily book via a reserved capital budget (the daily cycle leaves
+    # sleeve-owned names alone). GDELT feed (~15-min latency, so it trades drift,
+    # not the instant move); the feed is pluggable for a real-time provider later.
+    news_sleeve_enabled: bool = False
+    news_sleeve_budget: float = 0.10  # fraction of gross reserved for the sleeve
+    news_sleeve_max_names: int = 5  # cap on concurrent sleeve positions
+    news_sleeve_interval_seconds: int = 300
+    news_sleeve_hold_days: int = 5  # time-boxed drift window before exit
+    news_sleeve_cooldown_days: int = 3  # min gap between trades on one name
+    news_sleeve_min_confidence: float = 0.5
+    news_sleeve_lookback_minutes: int = 120  # news poll window per pass
+    # Event detection (what counts as "material" news):
+    news_sleeve_count_surge: float = 3.0  # recent count >= this x trailing daily mean
+    news_sleeve_tone_min: float = 1.5  # min |mean tone| to assign a direction
+    news_sleeve_baseline_days: int = 14  # trailing window for the count baseline
+
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.
