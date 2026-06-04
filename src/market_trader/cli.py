@@ -639,6 +639,63 @@ def cmd_ingest_filings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_build_universe(args: argparse.Namespace) -> int:
+    """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
+
+    Prints a comma-separated list to paste into ``MT_UNIVERSE`` (resolve_universe already
+    accepts a comma list). Dollar volume is from the configured feed — on free IEX that is
+    a fraction of consolidated, so the band is IEX-relative; sanity-check the output and
+    tune ``--min/--max-dollar-volume`` to the size tier you want.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        print("build-universe: Alpaca keys not set")
+        return 1
+
+    from datetime import date, timedelta
+
+    from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.collectors.edgar import EdgarClient
+    from market_trader.universe.liquid import LIQUID_LARGE_CAP
+    from market_trader.universe.screen import screen_for_liquidity
+
+    try:
+        candidates = EdgarClient(user_agent=settings.sec_user_agent).ticker_universe()
+        data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
+        end = date.today()
+        start = end - timedelta(days=args.window)
+        bars: dict[str, list[dict[str, Any]]] = {}
+        for i in range(0, len(candidates), 200):
+            try:
+                fetched = data.fetch_daily_bars(
+                    candidates[i : i + 200], start=start, end=end, feed=settings.alpaca_data_feed
+                )
+            except Exception:  # one bad batch never aborts the whole screen
+                continue
+            for rec in fetched:
+                bars.setdefault(str(rec["symbol"]), []).append(rec)
+        selected = screen_for_liquidity(
+            bars,
+            exclude=set(LIQUID_LARGE_CAP),
+            min_price=args.min_price,
+            min_dollar_volume=args.min_dollar_volume,
+            max_dollar_volume=args.max_dollar_volume,
+            top_n=args.top,
+        )
+    except Exception as exc:
+        print(f"build-universe failed: {exc}")
+        return 1
+    print(
+        f"build-universe: {len(selected)} names from {len(candidates)} filers "
+        f"({len(bars)} had bars), feed={settings.alpaca_data_feed}"
+    )
+    if selected:
+        print(",".join(selected))
+    return 0
+
+
 def cmd_signal_ic(args: argparse.Namespace) -> int:
     """Measure each signal's out-of-sample information coefficient (IC) over history."""
     settings = get_settings()
@@ -805,6 +862,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-fetch already-covered symbols (default: skip them so re-runs resume coverage)",
     )
     ingest_filings.set_defaults(func=cmd_ingest_filings)
+
+    build_universe = sub.add_parser(
+        "build-universe",
+        help="screen Alpaca-tradable SEC filers into a liquid small/mid-cap universe",
+    )
+    build_universe.add_argument(
+        "--window", type=int, default=30, help="trailing days for the liquidity screen"
+    )
+    build_universe.add_argument("--min-price", type=float, default=5.0, dest="min_price")
+    build_universe.add_argument(
+        "--min-dollar-volume", type=float, default=2e5, dest="min_dollar_volume"
+    )
+    build_universe.add_argument(
+        "--max-dollar-volume", type=float, default=1e7, dest="max_dollar_volume"
+    )
+    build_universe.add_argument("--top", type=int, default=400, help="max names to keep")
+    build_universe.set_defaults(func=cmd_build_universe)
 
     signal_ic = sub.add_parser(
         "signal-ic", help="measure each signal's out-of-sample IC over history"

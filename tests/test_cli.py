@@ -59,3 +59,9 @@ def test_ingest_filings_parser_accepts_resume_flags() -> None:
     # defaults: full universe, resumable (no refresh), 3y lookback
     d = build_parser().parse_args(["ingest-filings"])
     assert d.symbols == "" and d.refresh is False and d.days == 1095
+
+
+def test_build_universe_parser_has_screen_knobs() -> None:
+    d = build_parser().parse_args(["build-universe"])
+    assert d.window == 30 and d.min_price == 5.0 and d.top == 400
+    assert d.min_dollar_volume == 2e5 and d.max_dollar_volume == 1e7
