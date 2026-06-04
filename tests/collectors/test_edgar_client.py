@@ -83,3 +83,52 @@ def test_fetch_for_symbols_walks_submissions_and_parses() -> None:
 
     assert recs and all(r.issuer_ticker == "AAPL" for r in recs)  # ZZZZ has no CIK -> skipped
     assert {r.transaction_code for r in recs} == {"P", "S"}  # 8-K filtered; 2019 out of window
+
+
+def test_fetch_for_symbols_follows_filings_files_shards() -> None:
+    # Older filings live in `filings.files` shards; the fetcher must follow the ones
+    # whose date range overlaps the lookback (and skip shards that are entirely older).
+    tickers = json.dumps({"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}})
+    subs = json.dumps(
+        {
+            "filings": {
+                "recent": {
+                    "form": ["4"],
+                    "accessionNumber": ["0000320193-24-000077"],
+                    "filingDate": [date.today().isoformat()],
+                    "primaryDocument": ["recent-form4.xml"],
+                },
+                "files": [
+                    {"name": "shard-recent.json", "filingFrom": "2021-01-01", "filingTo": "2022-12-31"},
+                    {"name": "shard-ancient.json", "filingFrom": "2010-01-01", "filingTo": "2012-12-31"},
+                ],
+            }
+        }
+    )
+    shard_recent = json.dumps(
+        {
+            "form": ["4", "8-K"],
+            "accessionNumber": ["0000320193-22-000001", "x"],
+            "filingDate": ["2022-06-01", "2022-06-02"],
+            "primaryDocument": ["old-form4.xml", "8k.htm"],
+        }
+    )
+
+    def transport(url: str) -> str:
+        if "company_tickers" in url:
+            return tickers
+        if url.endswith("CIK0000320193.json"):
+            return subs
+        if url.endswith("shard-recent.json"):
+            return shard_recent
+        if url.endswith("shard-ancient.json"):
+            raise AssertionError("ancient shard is outside the lookback and must not be fetched")
+        if url.endswith(".xml"):
+            return _FORM4_XML
+        return ""
+
+    client = EdgarClient(user_agent="test", transport=transport)
+    recs = client.fetch_for_symbols(["AAPL"], lookback_days=2000)  # ~5.5y -> includes 2022 shard
+
+    assert len(recs) == 4  # 2 txns from recent + 2 from the in-window shard
+    assert {r.filing_date for r in recs} == {date.today(), date(2022, 6, 1)}
