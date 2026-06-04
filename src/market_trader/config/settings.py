@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # Set max_positions=0 to remove the cap entirely (hold everything selected).
     universe: str = "liquid"
     max_positions: int = 20
+    # Entry breadth: the top `top_quantile` of the ranked universe are eligible,
+    # then capped at max_positions. Raise it to fill a larger cap from a big
+    # universe (e.g. 0.4 of a ~140-name "global" set ~= 56 candidates -> up to 50).
+    top_quantile: float = 0.3
     # Ranking model: "composite" (transparent equal-weight z-score; default) or
     # "forecast" (the trained, calibrated ensemble). Keep it on "composite" until
     # the forecaster clears the equal-weight baseline out-of-sample (the
