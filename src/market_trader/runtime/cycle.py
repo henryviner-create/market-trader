@@ -269,6 +269,25 @@ def _ingest_news(store: BitemporalStore, symbols: list[str], settings: Settings)
         IngestionGateway(store).ingest(GdeltNewsCollector().normalize(articles))
 
 
+def _ingest_filings(store: BitemporalStore, symbols: list[str], settings: Settings) -> None:
+    """Best-effort: pull recent SEC Form-4 insider filings and ingest them.
+
+    Time-bounded (``insider_fetch_*`` settings) so a slow SEC endpoint never stalls
+    the cycle. The InsiderNetBuys feature is already in default_features(); this just
+    feeds it the data (it returns a neutral 0 while the store is empty).
+    """
+    from market_trader.collectors.edgar import EdgarClient, Form4Collector
+
+    client = EdgarClient(
+        user_agent=settings.sec_user_agent,
+        timeout_seconds=settings.insider_fetch_timeout_seconds,
+        budget_seconds=settings.insider_fetch_budget_seconds,
+    )
+    records = client.fetch_for_symbols(symbols, lookback_days=settings.insider_lookback_days)
+    if records:
+        IngestionGateway(store).ingest(Form4Collector().normalize(records))
+
+
 def run_live_paper_cycle(
     settings: Settings, *, lookback_days: int = 150, watchlist: list[str] | None = None
 ) -> CycleResult:
@@ -311,6 +330,8 @@ def run_live_paper_cycle(
 
         llm = anthropic_provider_from_settings(settings)
 
+    if settings.insider_enabled:
+        _ingest_filings(store, watchlist, settings)  # Form-4; feeds the InsiderNetBuys feature
     features = default_features()
     if settings.news_enabled:
         _ingest_news(store, watchlist, settings)  # daily-only: per-symbol fetch is heavy
