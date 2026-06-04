@@ -11,7 +11,7 @@ import pandas as pd
 from market_trader.core.schema import Observation
 from market_trader.core.synthetic import PRICE_DATASET, business_days
 from market_trader.core.time import day_close
-from market_trader.features.base import Feature, FeatureStore
+from market_trader.features.base import Feature
 from market_trader.features.technical import Momentum
 from market_trader.runtime.signal_ic import measure_signal_ic
 from market_trader.storage import InMemoryBitemporalStore
@@ -59,9 +59,8 @@ class _NoiseFeature(Feature):
 
 def test_measure_signal_ic_detects_a_predictive_signal() -> None:
     store, syms = _trending_store()
-    fs = FeatureStore(store, [Momentum(lookback=20)])
 
-    out = measure_signal_ic(store, fs, syms, _AS_OF, horizon_days=5, every=5)
+    out = measure_signal_ic(store, [Momentum(lookback=20)], syms, _AS_OF, horizon_days=5, every=5)
 
     assert "mom_20" in out
     r = out["mom_20"]
@@ -73,9 +72,8 @@ def test_measure_signal_ic_detects_a_predictive_signal() -> None:
 
 def test_measure_signal_ic_noise_signal_is_near_zero() -> None:
     store, syms = _trending_store()
-    fs = FeatureStore(store, [_NoiseFeature()])
 
-    out = measure_signal_ic(store, fs, syms, _AS_OF, horizon_days=5, every=5)
+    out = measure_signal_ic(store, [_NoiseFeature()], syms, _AS_OF, horizon_days=5, every=5)
 
     assert "noise" in out
     assert abs(out["noise"].mean_ic) < 0.3  # uncorrelated with returns -> ~0

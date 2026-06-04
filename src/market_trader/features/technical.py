@@ -27,6 +27,11 @@ class Momentum(Feature):
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
         panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
+        return self._from_panel(panel, symbols)
+
+    def _from_panel(self, panel: pd.DataFrame, symbols: Sequence[str]) -> pd.Series:
+        """Compute from a precomputed price panel — so a caller iterating many dates
+        can slice one panel instead of re-querying/re-pivoting the store per date."""
         if panel.empty or panel.shape[0] < self.lookback + 1:
             return pd.Series(index=list(symbols), dtype=float)
         p = panel.ffill()
@@ -44,6 +49,9 @@ class MeanReversion(Feature):
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
         panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
+        return self._from_panel(panel, symbols)
+
+    def _from_panel(self, panel: pd.DataFrame, symbols: Sequence[str]) -> pd.Series:
         if panel.empty or panel.shape[0] < self.lookback + 1:
             return pd.Series(index=list(symbols), dtype=float)
         p = panel.ffill()
@@ -60,7 +68,13 @@ class Volatility(Feature):
         self.name = f"vol_{window}"
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
-        returns = StorePriceView(store, as_of, dataset=self.dataset).returns_panel()
+        panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
+        return self._from_panel(panel, symbols)
+
+    def _from_panel(self, panel: pd.DataFrame, symbols: Sequence[str]) -> pd.Series:
+        if panel.empty:
+            return pd.Series(index=list(symbols), dtype=float)
+        returns = panel.pct_change().iloc[1:]
         if returns.empty:
             return pd.Series(index=list(symbols), dtype=float)
         vol = returns.tail(self.window).std(ddof=0)
