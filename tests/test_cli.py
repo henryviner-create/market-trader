@@ -5,7 +5,13 @@ from __future__ import annotations
 import pytest
 
 from market_trader import __version__
-from market_trader.cli import build_parser, check_database, health_payload, main
+from market_trader.cli import (
+    _symbols_to_fetch,
+    build_parser,
+    check_database,
+    health_payload,
+    main,
+)
 
 
 def test_version_command(capsys: pytest.CaptureFixture[str]) -> None:
@@ -31,3 +37,25 @@ def test_health_payload_reports_db_and_version(tmp_path) -> None:
     assert payload["db"] is True
     assert payload["status"] == "ok"
     assert payload["version"] == __version__
+
+
+def test_symbols_to_fetch_skips_covered_for_resumable_backfill() -> None:
+    universe = ["AAPL", "msft", "NVDA"]
+    # case-insensitive skip of names already in the store; survivors keep their casing
+    assert _symbols_to_fetch(universe, {"AAPL", "NVDA"}) == ["msft"]
+    # nothing covered -> the whole universe is still to do
+    assert _symbols_to_fetch(universe, set()) == ["AAPL", "msft", "NVDA"]
+    # everything covered -> a re-run is a no-op (coverage complete)
+    assert _symbols_to_fetch(universe, {"aapl", "msft", "nvda"}) == []
+
+
+def test_ingest_filings_parser_accepts_resume_flags() -> None:
+    args = build_parser().parse_args(
+        ["ingest-filings", "--symbols", "AAPL,MSFT", "--refresh", "--budget", "30"]
+    )
+    assert args.symbols == "AAPL,MSFT"
+    assert args.refresh is True
+    assert args.budget == 30.0
+    # defaults: full universe, resumable (no refresh), 3y lookback
+    d = build_parser().parse_args(["ingest-filings"])
+    assert d.symbols == "" and d.refresh is False and d.days == 1095

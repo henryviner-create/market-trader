@@ -527,27 +527,57 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _symbols_to_fetch(universe: list[str], covered: set[str]) -> list[str]:
+    """The universe symbols not already present in the store (case-insensitive).
+
+    Lets a Form-4 backfill stopped by its wall-clock budget resume: each re-run fetches
+    only the symbols still missing, so coverage extends instead of redoing the start.
+    (Per-symbol fetch is atomic — the budget is only checked between symbols — so a
+    symbol with any stored filings was fully fetched, never cut off mid-way.)
+    """
+    have = {s.upper() for s in covered}
+    return [s for s in universe if s.upper() not in have]
+
+
 def cmd_ingest_filings(args: argparse.Namespace) -> int:
-    """Backfill SEC Form-4 insider filings for the universe into the store."""
+    """Backfill SEC Form-4 insider filings into the store.
+
+    Resumable: by default, symbols already present in the store are skipped, so a fetch
+    cut short by the wall-clock ``--budget`` is finished by re-running (each pass extends
+    coverage). ``--refresh`` re-fetches everything (to pull new filings); ``--symbols``
+    fetches an explicit comma-separated list instead of the universe (chunked expansion).
+    """
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
     from market_trader.collectors import IngestionGateway
-    from market_trader.collectors.edgar import EdgarClient, Form4Collector
+    from market_trader.collectors.edgar import FORM4_DATASET, EdgarClient, Form4Collector
+    from market_trader.core.time import DISTANT_FUTURE
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
     from market_trader.universe.liquid import resolve_universe
 
     try:
         store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
         store.create_schema()
+        universe = (
+            [s.strip() for s in args.symbols.split(",") if s.strip()]
+            if args.symbols
+            else list(resolve_universe(settings.universe))
+        )
+        if args.refresh:
+            todo = list(universe)
+        else:
+            covered = {
+                o.entity_id.upper() for o in store.as_of(DISTANT_FUTURE, dataset=FORM4_DATASET)
+            }
+            todo = _symbols_to_fetch(universe, covered)
+        skipped = len(universe) - len(todo)
         client = EdgarClient(
             user_agent=settings.sec_user_agent,
             timeout_seconds=settings.insider_fetch_timeout_seconds,
             budget_seconds=float(args.budget),
         )
-        records = client.fetch_for_symbols(
-            resolve_universe(settings.universe), lookback_days=args.days
-        )
+        records = client.fetch_for_symbols(todo, lookback_days=args.days)
         observations = Form4Collector().normalize(records)
         IngestionGateway(store).ingest(observations)
     except Exception as exc:
@@ -555,7 +585,8 @@ def cmd_ingest_filings(args: argparse.Namespace) -> int:
         return 1
     print(
         f"ingest-filings: {len(records)} Form-4 records over ~{args.days}d "
-        f"-> {len(observations)} observations ingested"
+        f"-> {len(observations)} observations ingested "
+        f"({len(todo)} fetched, {skipped} already-covered skipped)"
     )
     return 0
 
@@ -716,6 +747,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest_filings.add_argument("--days", type=int, default=1095, help="lookback window in days")
     ingest_filings.add_argument(
         "--budget", type=float, default=600.0, help="wall-clock fetch budget (seconds)"
+    )
+    ingest_filings.add_argument(
+        "--symbols", default="", help="comma-separated tickers to fetch instead of the universe"
+    )
+    ingest_filings.add_argument(
+        "--refresh",
+        action="store_true",
+        help="re-fetch already-covered symbols (default: skip them so re-runs resume coverage)",
     )
     ingest_filings.set_defaults(func=cmd_ingest_filings)
 
