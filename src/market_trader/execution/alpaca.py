@@ -153,3 +153,19 @@ class AlpacaBroker:
             buying_power=float(a.get("buying_power", 0.0)),
             last_equity=float(a.get("last_equity", 0.0)),
         )
+
+    def list_us_equities(self, *, tradable_only: bool = True) -> list[str]:
+        """Active US-equity symbols Alpaca recognises — clean candidates for a screen.
+
+        Every symbol here is a valid Alpaca instrument, so a bars request built from them
+        won't 400 on a malformed ticker the way the raw SEC filer list does.
+        """
+        assets = self._request("GET", "/v2/assets?status=active&asset_class=us_equity")
+        out: list[str] = []
+        for a in assets if isinstance(assets, list) else []:
+            if tradable_only and not a.get("tradable", False):
+                continue
+            symbol = a.get("symbol")
+            if symbol:
+                out.append(str(symbol))
+        return sorted(out)
