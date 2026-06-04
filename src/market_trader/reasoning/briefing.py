@@ -95,8 +95,7 @@ def render_brief_markdown(ctx: BriefingContext) -> str:
     lines = [
         f"# Pre-market briefing — {ctx.as_of:%Y-%m-%d}",
         "",
-        f"**Regime:** {ctx.regime['label']} "
-        f"(yield-curve slope: {ctx.regime['yield_curve_slope']})",
+        f"**Regime:** {ctx.regime['label']} (yield-curve slope: {ctx.regime['yield_curve_slope']})",
         "",
         "## Top signals (composite z-score)",
     ]
