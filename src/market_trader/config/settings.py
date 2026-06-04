@@ -113,6 +113,16 @@ class Settings(BaseSettings):
     news_fetch_timeout_seconds: float = 10.0
     news_fetch_budget_seconds: float = 45.0
 
+    # SEC EDGAR insider (Form-4) flow signal. The InsiderNetBuys feature is already
+    # in default_features(); this fetches the data that feeds it. SEC requires a
+    # descriptive User-Agent — set MT_SEC_USER_AGENT to "Your Name your@email". OFF
+    # by default; bounded like the news sweep so a slow SEC endpoint can't stall.
+    insider_enabled: bool = False
+    sec_user_agent: str = "market-trader research contact@example.com"
+    insider_fetch_timeout_seconds: float = 15.0
+    insider_fetch_budget_seconds: float = 90.0
+    insider_lookback_days: int = 400
+
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
     # committed. alpaca_paper=true uses the paper endpoints.

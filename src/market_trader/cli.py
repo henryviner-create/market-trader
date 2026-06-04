@@ -527,6 +527,39 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_filings(args: argparse.Namespace) -> int:
+    """Backfill SEC Form-4 insider filings for the universe into the store."""
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.edgar import EdgarClient, Form4Collector
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        client = EdgarClient(
+            user_agent=settings.sec_user_agent,
+            timeout_seconds=settings.insider_fetch_timeout_seconds,
+            budget_seconds=float(args.budget),
+        )
+        records = client.fetch_for_symbols(
+            resolve_universe(settings.universe), lookback_days=args.days
+        )
+        observations = Form4Collector().normalize(records)
+        IngestionGateway(store).ingest(observations)
+    except Exception as exc:
+        print(f"ingest-filings failed: {exc}")
+        return 1
+    print(
+        f"ingest-filings: {len(records)} Form-4 records over ~{args.days}d "
+        f"-> {len(observations)} observations ingested"
+    )
+    return 0
+
+
 def _print_cycle(result: CycleResult, *, dry: bool) -> None:
     tag = "dry-run" if dry else "live-paper"
     print(f"cycle {result.as_of.isoformat()}  [{tag}]")
@@ -630,6 +663,15 @@ def build_parser() -> argparse.ArgumentParser:
     )
     simulate.add_argument("--days", type=int, default=500, help="history window in days")
     simulate.set_defaults(func=cmd_simulate)
+
+    ingest_filings = sub.add_parser(
+        "ingest-filings", help="backfill SEC Form-4 insider filings for the universe"
+    )
+    ingest_filings.add_argument("--days", type=int, default=1095, help="lookback window in days")
+    ingest_filings.add_argument(
+        "--budget", type=float, default=600.0, help="wall-clock fetch budget (seconds)"
+    )
+    ingest_filings.set_defaults(func=cmd_ingest_filings)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
     cycle.add_argument(
