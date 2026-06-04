@@ -151,6 +151,14 @@ class EdgarClient:
                 self._cik = {}
         return self._cik
 
+    def ticker_universe(self) -> list[str]:
+        """All SEC-filer tickers — the candidate set for a liquidity screen.
+
+        These are exactly the names that can *have* Form-4 filings, so they are the
+        natural starting population for an insider-signal universe.
+        """
+        return sorted(self._cik_map().keys())
+
     def fetch_for_symbols(
         self, symbols: Sequence[str], *, lookback_days: int = 400
     ) -> list[Form4Record]:
