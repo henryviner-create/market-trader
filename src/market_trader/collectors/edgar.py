@@ -80,6 +80,7 @@ _log = get_logger("edgar")
 
 _SEC_TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
 _SEC_SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
+_SEC_SUBMISSIONS_FILE_URL = "https://data.sec.gov/submissions/{name}"
 _SEC_ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}"
 
 # (url) -> response body text (JSON or XML). Injectable so parsing is offline-testable.
@@ -128,7 +129,7 @@ class EdgarClient:
         transport: EdgarTransport | None = None,
         timeout_seconds: float = 15.0,
         budget_seconds: float = 90.0,
-        max_filings_per_symbol: int = 60,
+        max_filings_per_symbol: int = 250,
     ) -> None:
         self._get = transport or (
             lambda url: _edgar_get(url, user_agent=user_agent, timeout=timeout_seconds)
@@ -181,16 +182,43 @@ class EdgarClient:
 
     def _fetch_symbol(self, ticker: str, cik: str, cutoff: date) -> list[Form4Record]:
         subs = json.loads(self._get(_SEC_SUBMISSIONS_URL.format(cik=cik)))
-        recent = subs.get("filings", {}).get("recent", {})
+        filings = subs.get("filings", {})
+        out: list[Form4Record] = []
+        seen = self._process_block(filings.get("recent", {}), cik, ticker, cutoff, out, 0)
+        # Older filings live in additional shards (`filings.files`) — pull those whose
+        # date range reaches into the lookback. Without this we only ever see ~the last
+        # year for active filers: too few independent decision dates to confirm an edge.
+        for shard in filings.get("files", []):
+            if seen >= self._max_filings:
+                break
+            to = _parse_date(shard.get("filingTo"))
+            name = shard.get("name")
+            if to is None or to < cutoff or not name:
+                continue
+            try:
+                block = json.loads(self._get(_SEC_SUBMISSIONS_FILE_URL.format(name=name)))
+                seen = self._process_block(block, cik, ticker, cutoff, out, seen)
+            except Exception:  # skip an unreadable shard
+                continue
+        return out
+
+    def _process_block(
+        self,
+        block: dict[str, Any],
+        cik: str,
+        ticker: str,
+        cutoff: date,
+        out: list[Form4Record],
+        seen: int,
+    ) -> int:
+        """Parse the Form-4 filings in one parallel-array submissions block."""
         rows = zip(
-            recent.get("form", []),
-            recent.get("accessionNumber", []),
-            recent.get("filingDate", []),
-            recent.get("primaryDocument", []),
+            block.get("form", []),
+            block.get("accessionNumber", []),
+            block.get("filingDate", []),
+            block.get("primaryDocument", []),
             strict=False,
         )
-        out: list[Form4Record] = []
-        seen = 0
         for form, acc, fdate, doc in rows:
             if form != "4":
                 continue
@@ -205,7 +233,7 @@ class EdgarClient:
                 out.extend(self.parse_form4_xml(xml, filing_date=fd, fallback_ticker=ticker))
             except Exception:  # skip an unparseable filing
                 continue
-        return out
+        return seen
 
     @staticmethod
     def _doc_url(cik: str, accession: str, primary_document: str) -> str:
