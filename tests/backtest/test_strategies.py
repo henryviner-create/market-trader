@@ -11,6 +11,7 @@ from market_trader.backtest.pit import PanelPriceView
 from market_trader.backtest.strategies import (
     CompositeBacktestStrategy,
     EqualWeightStrategy,
+    LongShortInsiderStrategy,
     VolTargetedStrategy,
 )
 from market_trader.portfolio.construction import ledoit_wolf_cov
@@ -92,3 +93,23 @@ def test_vol_targeted_strategy_does_not_lever_past_max_gross() -> None:
     ).target_weights(view, t)
 
     assert abs(sum(w.values()) - 1.0) < 1e-6  # would lever up, but held at max_gross
+
+
+def test_long_short_insider_is_dollar_neutral_and_trades_the_extremes() -> None:
+    dates = pd.bdate_range("2022-01-03", periods=30)
+    syms = [f"S{i}" for i in range(6)]
+    prices = pd.DataFrame({s: 100.0 for s in syms}, index=dates)  # prices only feed universe()
+    t = dates[-1].to_pydatetime()
+    view = PanelPriceView(prices, t)
+
+    # S5/S4 net buyers, S0/S1 net sellers, S2/S3 no disclosed activity (-> excluded)
+    scores = pd.Series({"S0": -3.0, "S1": -1.0, "S2": 0.0, "S3": 0.0, "S4": 1.0, "S5": 3.0})
+    w = LongShortInsiderStrategy(
+        insider_scores={t: scores}, max_positions_per_side=2, gross=1.0
+    ).target_weights(view, t)
+
+    assert abs(sum(w.values())) < 1e-9  # dollar-neutral (long gross == short gross)
+    assert abs(sum(abs(v) for v in w.values()) - 1.0) < 1e-9  # gross == 1.0
+    assert w["S5"] > 0 and w["S4"] > 0  # strongest net buyers -> long
+    assert w["S0"] < 0 and w["S1"] < 0  # strongest net sellers -> short
+    assert "S2" not in w and "S3" not in w  # no activity -> not traded

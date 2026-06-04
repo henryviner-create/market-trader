@@ -90,7 +90,8 @@ def run_backtest(
             w_series = pd.Series(w, dtype=float).reindex(returns.columns).fillna(0.0)
             contrib = window.fillna(0.0).mul(w_series, axis=1).sum(axis=1)
             gross.loc[contrib.index] = contrib.to_numpy()
-            costs.loc[window.index[0]] += cost
+            hold_days = max((pd.Timestamp(t_next) - pd.Timestamp(t)).days, 0)
+            costs.loc[window.index[0]] += cost + cost_model.holding_cost(w, hold_days)
         prev_w = w
 
     net = gross - costs

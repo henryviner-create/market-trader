@@ -151,3 +151,37 @@ class VolTargetedStrategy:
         if gross > self.max_gross and gross > 0:
             scaled = scaled * (self.max_gross / gross)
         return {str(s): float(v) for s, v in scaled.items() if abs(float(v)) > 1e-9}
+
+
+@dataclass
+class LongShortInsiderStrategy:
+    """Dollar-neutral cross-sectional book on the insider signal.
+
+    Long the strongest net-buying names, short the strongest net-selling, equal weight
+    within each leg at ``gross / 2`` a side — so the book is ~market-neutral and the
+    validated insider rank-edge stands alone, stripped of the market beta that caps a
+    long-only book at roughly passive's Sharpe. ``insider_scores`` is the same
+    point-in-time ``{rebalance -> (symbol -> net buys)}`` map used elsewhere; only names
+    with actual disclosed activity *and* a tradable price enter the book.
+    """
+
+    insider_scores: dict[datetime, pd.Series]
+    max_positions_per_side: int = 10
+    gross: float = 1.0
+    name: str = "ls_insider"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        scores = self.insider_scores.get(as_of)
+        if scores is None:
+            return {}
+        tradable = set(view.universe())
+        active = scores.dropna()
+        active = active[(active != 0.0) & active.index.isin(tradable)]
+        ranked = active.sort_values()
+        k = min(self.max_positions_per_side, ranked.shape[0] // 2)
+        if k < 1:
+            return {}
+        per = self.gross / (2.0 * k)
+        out = {str(s): -per for s in ranked.index[:k]}  # most net selling -> short
+        out.update({str(s): per for s in ranked.index[-k:]})  # most net buying -> long
+        return out

@@ -27,6 +27,10 @@ def one_way_turnover(prev: Weights, new: Weights) -> float:
 class CostModel(Protocol):
     def turnover_cost(self, prev: Weights, new: Weights) -> float: ...
 
+    def holding_cost(self, weights: Weights, days: int) -> float:
+        """Cost of *holding* a book for ``days`` — e.g. borrow on short notional."""
+        ...
+
 
 @dataclass(frozen=True)
 class BasicCostModel:
@@ -40,10 +44,32 @@ class BasicCostModel:
         bps = self.commission_bps + self.half_spread_bps + self.slippage_bps
         return one_way_turnover(prev, new) * bps * 1e-4
 
+    def holding_cost(self, weights: Weights, days: int) -> float:
+        return 0.0  # a long-only book carries no borrow
+
+
+@dataclass(frozen=True)
+class BorrowCostModel(BasicCostModel):
+    """Basic turnover cost plus a borrow fee on short notional held over time.
+
+    ``annual_borrow_bps`` is the stock-loan rate: ~0-50 bps/yr for general-collateral
+    large caps, hundreds-to-thousands for hard-to-borrow names. A short book backtested
+    without it overstates the edge, so every long/short run is charged this.
+    """
+
+    annual_borrow_bps: float = 50.0
+
+    def holding_cost(self, weights: Weights, days: int) -> float:
+        short_notional = sum(-w for w in weights.values() if w < 0.0)
+        return short_notional * (self.annual_borrow_bps * 1e-4) * (days / 365.0)
+
 
 @dataclass(frozen=True)
 class ZeroCostModel:
     """Frictionless costs — for isolating signal from costs in tests only."""
 
     def turnover_cost(self, prev: Weights, new: Weights) -> float:
+        return 0.0
+
+    def holding_cost(self, weights: Weights, days: int) -> float:
         return 0.0
