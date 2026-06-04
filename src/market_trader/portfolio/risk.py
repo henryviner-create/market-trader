@@ -48,6 +48,16 @@ def apply_risk_limits(
             if exposure > limits.max_sector_weight and exposure > 0:
                 s[members] = s[members] * (limits.max_sector_weight / exposure)
 
+    # Net-exposure cap: trim the dominant side toward neutral (shrinks gross, never
+    # flips a name's sign) so a long/short book can't drift to unintended directional
+    # risk. This was previously unenforced even though the limit field existed.
+    net = float(s.sum())
+    if abs(net) > limits.max_net_exposure + 1e-12:
+        dominant = s > 0 if net > 0 else s < 0
+        dom_gross = float(s[dominant].abs().sum())
+        if dom_gross > 0:
+            s.loc[dominant] = s[dominant] * (1.0 - (abs(net) - limits.max_net_exposure) / dom_gross)
+
     return {str(k): float(v) for k, v in s.items() if v != 0.0}
 
 
@@ -63,6 +73,9 @@ def check_order(
     gross = sum(abs(v) for v in proposed.values())
     if gross > limits.max_gross_exposure + 1e-9:
         raise RiskLimitBreach(f"gross {gross:.4f} exceeds {limits.max_gross_exposure}")
+    net = sum(proposed.values())
+    if abs(net) > limits.max_net_exposure + 1e-9:
+        raise RiskLimitBreach(f"net {net:.4f} exceeds {limits.max_net_exposure}")
 
 
 class DrawdownCircuitBreaker:
