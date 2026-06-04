@@ -469,12 +469,14 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
     import pandas as pd
 
+    from market_trader.backtest.costs import BorrowCostModel
     from market_trader.backtest.engine import buy_and_hold_summary, run_backtest
     from market_trader.backtest.pit import observations_to_price_frame
     from market_trader.backtest.simulation import monte_carlo_report
     from market_trader.backtest.strategies import (
         CompositeBacktestStrategy,
         EqualWeightStrategy,
+        LongShortInsiderStrategy,
         VolTargetedStrategy,
     )
     from market_trader.collectors import IngestionGateway, PriceCollector
@@ -519,15 +521,21 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             max_positions=max_pos, insider_scores=insider_scores, name="composite+insider"
         )
         governed = VolTargetedStrategy(tilted, target_vol=settings.target_vol, name="+insider@vol")
-        result = run_backtest(store, governed, schedule)  # Monte-Carlo on the governed candidate
+        # Long/short: isolate the insider edge from market beta, vol-governed, net of borrow.
+        long_short = LongShortInsiderStrategy(insider_scores=insider_scores)
+        ls_governed = VolTargetedStrategy(
+            long_short, target_vol=settings.target_vol, max_gross=2.0, name="ls_insider@vol"
+        )
+        ls_result = run_backtest(store, ls_governed, schedule, BorrowCostModel())
         summaries = {
             base.name: run_backtest(store, base, schedule).summary,
             tilted.name: run_backtest(store, tilted, schedule).summary,
-            governed.name: result.summary,
+            governed.name: run_backtest(store, governed, schedule).summary,
+            ls_governed.name: ls_result.summary,
             "equal_weight": run_backtest(store, EqualWeightStrategy(), schedule).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
         }
-        sim = monte_carlo_report(result.net_returns.to_numpy(dtype=float))
+        sim = monte_carlo_report(ls_result.net_returns.to_numpy(dtype=float))  # the L/S candidate
     except Exception as exc:
         print(f"simulate failed: {exc}")
         return 1
@@ -550,8 +558,14 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         f"{settings.target_vol:.0%}), max_dd {tilt_s.max_drawdown:.0%}->{gov_s.max_drawdown:.0%} "
         f"(cap 25%)"
     )
+    ls_s = summaries["ls_insider@vol"]
+    bnh_s = summaries["buy_and_hold"]
     print(
-        f"  Monte-Carlo ({sim.n_sims} paths): total return q05/q50/q95 = "
+        f"  long/short: sharpe {ls_s.sharpe:+.2f} (vs +insider@vol {gov_s.sharpe:+.2f}, "
+        f"buy_and_hold {bnh_s.sharpe:+.2f}), max_dd {ls_s.max_drawdown:.0%}, net of borrow"
+    )
+    print(
+        f"  Monte-Carlo [ls_insider@vol] ({sim.n_sims} paths): total return q05/q50/q95 = "
         f"{sim.total_return_q05:+.1%} / {sim.total_return_q50:+.1%} / {sim.total_return_q95:+.1%}"
     )
     print(

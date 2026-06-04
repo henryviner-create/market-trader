@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from market_trader.backtest.costs import BasicCostModel, ZeroCostModel, one_way_turnover
+from market_trader.backtest.costs import (
+    BasicCostModel,
+    BorrowCostModel,
+    ZeroCostModel,
+    one_way_turnover,
+)
 
 
 def test_one_way_turnover() -> None:
@@ -21,3 +26,19 @@ def test_basic_cost_model_charges_bps_on_turnover() -> None:
 
 def test_zero_cost_model() -> None:
     assert ZeroCostModel().turnover_cost({"A": 1.0}, {"B": 1.0}) == 0.0
+
+
+def test_basic_and_zero_models_carry_no_holding_cost() -> None:
+    assert BasicCostModel().holding_cost({"A": -1.0}, days=365) == 0.0
+    assert ZeroCostModel().holding_cost({"A": -1.0}, days=365) == 0.0
+
+
+def test_borrow_cost_model_charges_on_short_notional() -> None:
+    model = BorrowCostModel(annual_borrow_bps=50.0)
+    assert model.holding_cost({"A": 0.5, "B": 0.5}, days=365) == 0.0  # long-only: no borrow
+    # 0.5 short notional, full year at 50 bps -> 0.5 * 50e-4
+    assert abs(model.holding_cost({"A": 0.5, "B": -0.5}, days=365) - 0.5 * 50e-4) < 1e-12
+    # half a year -> half the fee
+    assert abs(model.holding_cost({"A": -0.4}, days=182) - 0.4 * 50e-4 * (182 / 365)) < 1e-12
+    # turnover still behaves like the basic model (inherited 4 bps default)
+    assert abs(model.turnover_cost({"A": 1.0}, {"B": 1.0}) - 2.0 * 4e-4) < 1e-15

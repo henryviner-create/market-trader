@@ -6,7 +6,13 @@ lookahead bias is structurally hard rather than a thing you have to remember not
 to do. See ``DECISIONS.md`` D4.
 """
 
-from market_trader.backtest.costs import BasicCostModel, CostModel, ZeroCostModel, one_way_turnover
+from market_trader.backtest.costs import (
+    BasicCostModel,
+    BorrowCostModel,
+    CostModel,
+    ZeroCostModel,
+    one_way_turnover,
+)
 from market_trader.backtest.engine import (
     BacktestResult,
     buy_and_hold_summary,
@@ -23,6 +29,7 @@ from market_trader.backtest.types import PointInTimeView, Strategy, Weights
 __all__ = [
     "BacktestResult",
     "BasicCostModel",
+    "BorrowCostModel",
     "CostModel",
     "EqualWeightStrategy",
     "MomentumStrategy",
