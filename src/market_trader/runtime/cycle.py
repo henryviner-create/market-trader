@@ -155,9 +155,24 @@ def run_paper_cycle(
     prediction_horizon: int = 5,
     stop_loss_pct: float = 0.0,
     reserved_symbols: frozenset[str] = frozenset(),
+    cancel_stale_orders: bool = False,
 ) -> CycleResult:
     """Score the universe, form risk-managed target weights, execute on the broker."""
     limits = limits or _limits_from_settings(settings)
+    if cancel_stale_orders:
+        # A fresh daily target supersedes any still-open orders from a prior run.
+        # Cancel them (sleeve-reserved names excepted) before rebalancing, so the
+        # new book is never rejected as a wash trade against its own stale resting
+        # orders — and a leftover order can't distort the position accounting.
+        stale = [o for o in broker.get_open_orders() if o.symbol not in reserved_symbols]
+        for o in stale:
+            broker.cancel_order(o.client_order_id)
+        if stale:
+            _log.info(
+                "cancelled_stale_orders",
+                count=len(stale),
+                names=sorted({o.symbol for o in stale}),
+            )
     fs = feature_store or FeatureStore(store, default_features())
     matrix = fs.compute_matrix(as_of, symbols)
 
@@ -340,4 +355,5 @@ def run_live_paper_cycle(
         model_version=settings.scorer,
         stop_loss_pct=settings.stop_loss_pct,
         reserved_symbols=reserved,
+        cancel_stale_orders=True,  # clear a prior run's unfilled orders first
     )
