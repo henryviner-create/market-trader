@@ -12,7 +12,7 @@ from datetime import datetime
 
 import pandas as pd
 
-from market_trader.backtest.types import PointInTimeView, Weights
+from market_trader.backtest.types import PointInTimeView, Strategy, Weights
 
 
 def _zscore(s: pd.Series) -> pd.Series:
@@ -107,3 +107,47 @@ class CompositeBacktestStrategy:
                 return {str(s): float(inv.loc[s] / total) for s in winners}
         w = 1.0 / len(winners)
         return {str(s): w for s in winners}
+
+
+@dataclass
+class VolTargetedStrategy:
+    """Scale any strategy's book to a target annualised volatility — the DD governor.
+
+    Wraps an inner strategy: takes its weights, estimates the held names' covariance
+    (Ledoit-Wolf) over a trailing window from the point-in-time view, and rescales so the
+    book's annualised volatility equals ``target_vol`` — capped at ``max_gross`` so a calm
+    market can't lever it without bound. Cutting exposure as volatility rises is what keeps
+    realised drawdown inside the governor; on a long-only book it mostly trades into cash.
+    """
+
+    inner: Strategy
+    target_vol: float = 0.10
+    max_gross: float = 1.0
+    lookback: int = 90
+    name: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            self.name = f"{self.inner.name}@{self.target_vol:.0%}vol"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        from market_trader.portfolio.construction import (
+            ledoit_wolf_cov,
+            volatility_target_weights,
+        )
+
+        weights = self.inner.target_weights(view, as_of)
+        if not weights:
+            return weights
+        rets = view.returns_panel()
+        held = [s for s in weights if s in rets.columns]
+        window = rets[held].tail(self.lookback).dropna(axis=1, how="any")
+        if window.shape[1] < 2 or window.shape[0] < 20:
+            return weights  # too little history to estimate covariance — leave unscaled
+        cov = ledoit_wolf_cov(window)
+        w = pd.Series(weights).reindex(cov.columns).fillna(0.0)
+        scaled = volatility_target_weights(w, cov, self.target_vol)
+        gross = float(scaled.abs().sum())
+        if gross > self.max_gross and gross > 0:
+            scaled = scaled * (self.max_gross / gross)
+        return {str(s): float(v) for s, v in scaled.items() if abs(float(v)) > 1e-9}
