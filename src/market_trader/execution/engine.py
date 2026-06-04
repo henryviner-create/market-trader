@@ -94,7 +94,11 @@ class ExecutionEngine:
             remaining = pending.qty - pending.filled_qty
             signed = remaining if pending.side == OrderSide.BUY else -remaining
             positions[pending.symbol] = positions.get(pending.symbol, 0.0) + signed
-        orders: list[Order] = []
+        # Build the orders first, then submit SELLs before BUYs: a sell frees
+        # buying power, so a fully-invested rebalance can fund its entries instead
+        # of being rejected (Alpaca returns 403 "insufficient buying power" for a
+        # buy it cannot cover). Stable sort preserves intra-side order.
+        planned: list[tuple[Order, float]] = []
         for symbol, weight in target_weights.items():
             price = prices.get(symbol)
             if not price or price <= 0:
@@ -109,6 +113,11 @@ class ExecutionEngine:
                 side=OrderSide.BUY if delta > 0 else OrderSide.SELL,
                 qty=abs(delta),
             )
+            planned.append((order, price))
+        planned.sort(key=lambda op: op[0].side != OrderSide.SELL)  # SELLs first
+
+        orders: list[Order] = []
+        for order, price in planned:
             sanity_check_order(order, ref_price=price)
             if not self.rate_limiter.allow():
                 raise OrderRateExceeded(f"order-rate cap {self.rate_limiter.max_orders} reached")
@@ -116,7 +125,7 @@ class ExecutionEngine:
             orders.append(filled)
             self._audit(
                 as_of,
-                symbol,
+                order.symbol,
                 "order",
                 {
                     "client_order_id": order.client_order_id,

@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     news_enabled: bool = False
     news_window_days: int = 7
     news_timespan: str = "3d"
+    # Bound the per-cycle GDELT sweep so a slow/throttling free API can never stall
+    # a trading cycle: each request times out fast, and the whole per-symbol sweep
+    # is capped by a wall-clock budget (remaining names are skipped that cycle).
+    news_fetch_timeout_seconds: float = 10.0
+    news_fetch_budget_seconds: float = 45.0
 
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never

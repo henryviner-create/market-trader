@@ -237,10 +237,19 @@ def run_dry_paper_cycle(settings: Settings, *, n_syms: int = 8, n_days: int = 12
 
 
 def _ingest_news(store: BitemporalStore, symbols: list[str], settings: Settings) -> None:
-    """Best-effort: pull recent GDELT articles for the universe and ingest them."""
+    """Best-effort: pull recent GDELT articles for the universe and ingest them.
+
+    Time-bounded (see ``news_fetch_*`` settings) so a slow/throttling GDELT can
+    never stall the cycle — the sweep stops at its wall-clock budget and the rest
+    is picked up on a later run.
+    """
     from market_trader.collectors.gdelt import GdeltClient, GdeltNewsCollector
 
-    articles = GdeltClient().fetch_for_symbols(symbols, timespan=settings.news_timespan)
+    client = GdeltClient(
+        timeout_seconds=settings.news_fetch_timeout_seconds,
+        budget_seconds=settings.news_fetch_budget_seconds,
+    )
+    articles = client.fetch_for_symbols(symbols, timespan=settings.news_timespan)
     if articles:
         IngestionGateway(store).ingest(GdeltNewsCollector().normalize(articles))
 
