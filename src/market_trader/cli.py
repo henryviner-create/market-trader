@@ -151,6 +151,33 @@ def _maybe_start_daily_schedule(settings: Any, log: Any) -> None:
     log.info("daily_schedule_started", poll_seconds=settings.daily_cycle_poll_seconds)
 
 
+def _maybe_start_news_sleeve_loop(settings: Any, log: Any) -> None:
+    """Attach the event-driven news sleeve as a daemon thread, if armed.
+
+    OFF unless ``MT_NEWS_SLEEVE_ENABLED=true`` and Alpaca keys are present. It acts
+    only on fresh, material news (non-churning) and goes through ExecutionEngine,
+    so it inherits every rail. A crash never takes the health endpoint down.
+    """
+    if not settings.news_sleeve_enabled:
+        return
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        log.warning("news_sleeve_disabled", reason="alpaca keys not set")
+        return
+
+    import threading
+
+    from market_trader.runtime.news_sleeve import run_news_sleeve_loop
+
+    def _loop() -> None:
+        try:
+            run_news_sleeve_loop(settings)
+        except Exception as exc:  # surface; keep the health server alive
+            log.error("news_sleeve_loop_crashed", error=str(exc))
+
+    threading.Thread(target=_loop, name="news-sleeve", daemon=True).start()
+    log.info("news_sleeve_started", interval_seconds=settings.news_sleeve_interval_seconds)
+
+
 def cmd_serve(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
@@ -167,6 +194,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
 
     _maybe_start_intraday_loop(settings, log)
     _maybe_start_daily_schedule(settings, log)
+    _maybe_start_news_sleeve_loop(settings, log)
 
     log.info(
         "engine_serving",
@@ -174,6 +202,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         live_enabled=settings.live_trading_enabled,
         intraday=settings.intraday_enabled,
         daily_cycle=settings.daily_cycle_enabled,
+        news_sleeve=settings.news_sleeve_enabled,
         port=args.port,
     )
     server.serve_forever()

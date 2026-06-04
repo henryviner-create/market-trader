@@ -11,7 +11,7 @@ order routing stays gated by ``Settings.assert_live_allowed()`` in the engine.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
 import pandas as pd
@@ -154,6 +154,7 @@ def run_paper_cycle(
     model_version: str = "composite",
     prediction_horizon: int = 5,
     stop_loss_pct: float = 0.0,
+    reserved_symbols: frozenset[str] = frozenset(),
 ) -> CycleResult:
     """Score the universe, form risk-managed target weights, execute on the broker."""
     limits = limits or _limits_from_settings(settings)
@@ -175,7 +176,9 @@ def run_paper_cycle(
             horizon_days=prediction_horizon,
         )
 
-    positions = broker.get_positions()
+    # Symbols owned by another sleeve (e.g. the news sleeve) are reserved: the
+    # daily book neither selects nor flattens them, so the two never fight.
+    positions = [p for p in broker.get_positions() if p.symbol not in reserved_symbols]
     held = {p.symbol for p in positions}
     stopped = _stop_losses(positions, prices, stop_loss_pct)  # cut losers past the hard floor
     if stopped:
@@ -187,7 +190,7 @@ def run_paper_cycle(
             enter_k = min(enter_k, max_positions)  # cap breadth into a diversified book
         exit_k = min(len(ranked), max(enter_k, round(enter_k * exit_band_multiple)))
         winners = _select_with_hysteresis(ranked, held, enter_k, exit_k, max_positions)
-        winners = [w for w in winners if w not in stopped]  # stop overrides the signal
+        winners = [w for w in winners if w not in stopped and w not in reserved_symbols]
         target = apply_risk_limits(_risk_weights(winners, matrix, risk_weighting, ranked), limits)
 
     # Flatten holdings that left the selection: the engine only acts on symbols in
@@ -294,6 +297,21 @@ def run_live_paper_cycle(
         ic = _measured_signal_ic(store, settings, as_of)
         _log.info("ic_weighting", signals=len(ic), ic={k: round(v, 4) for k, v in ic.items()})
     score_fn = build_scorer(settings, store, fs, watchlist, as_of, ic=ic)
+
+    # If the news sleeve is on, reserve the names it owns (the daily book leaves
+    # them alone) and shrink the daily book's gross by the sleeve's budget so the
+    # two together stay within the exposure cap.
+    reserved: frozenset[str] = frozenset()
+    limits: RiskLimits | None = None
+    if settings.news_sleeve_enabled:
+        from market_trader.runtime.news_sleeve import active_sleeve_positions
+
+        reserved = frozenset(active_sleeve_positions(store, as_of))
+        base = _limits_from_settings(settings)
+        limits = replace(
+            base, max_gross_exposure=base.max_gross_exposure * (1 - settings.news_sleeve_budget)
+        )
+
     return run_paper_cycle(
         store,
         as_of=as_of,
@@ -301,6 +319,7 @@ def run_live_paper_cycle(
         prices=prices,
         broker=broker,
         settings=settings,
+        limits=limits,
         llm=llm,
         feature_store=fs,
         score_fn=score_fn,
@@ -310,4 +329,5 @@ def run_live_paper_cycle(
         prediction_log=True,
         model_version=settings.scorer,
         stop_loss_pct=settings.stop_loss_pct,
+        reserved_symbols=reserved,
     )

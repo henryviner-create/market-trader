@@ -83,6 +83,32 @@ def test_stop_loss_flattens_a_losing_holding_even_when_top_ranked() -> None:
     assert any(o.symbol == "S3" and o.side == OrderSide.SELL for o in result.orders)
 
 
+def test_reserved_symbols_are_neither_selected_nor_flattened() -> None:
+    # A sleeve-owned name must be left completely alone by the daily book: not
+    # bought (even if top-ranked) and not flattened (even though it's held).
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+    broker.submit_order(Order("seed", "S3", OrderSide.BUY, 10.0))  # the sleeve owns S3
+
+    def score(matrix: pd.DataFrame, _at) -> pd.Series:  # rank S3 #1 to tempt the daily book
+        return pd.Series([10.0 if s == "S3" else 1.0 for s in matrix.index], index=matrix.index)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        score_fn=score,
+        top_quantile=0.5,
+        reserved_symbols=frozenset({"S3"}),
+    )
+    assert "S3" not in result.target_weights  # reserved -> not selected
+    assert all(o.symbol != "S3" for o in result.orders)  # reserved -> not flattened/traded
+
+
 def test_run_paper_cycle_uses_injected_score_fn() -> None:
     # The pluggable scorer (the seam the forecaster plugs into) must drive
     # selection: a scorer that ranks S3 top makes S3 a winner regardless of features.
