@@ -408,6 +408,55 @@ def cmd_score_predictions(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_evaluate(args: argparse.Namespace) -> int:
+    """Self-evaluation: attribute graded decisions to signals + regimes; optional reflection."""
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        print("evaluate: Alpaca keys not set")
+        return 1
+
+    from datetime import date, timedelta
+
+    from market_trader.collectors import IngestionGateway, PriceCollector
+    from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.core.time import utcnow
+    from market_trader.runtime.evaluation import (
+        attribute_performance,
+        build_trade_journal,
+        evaluation_summary_markdown,
+        reflect,
+    )
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        end = date.today()
+        data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
+        records = data.fetch_daily_bars(
+            resolve_universe(settings.universe),
+            start=end - timedelta(days=60),
+            end=end,
+            feed=settings.alpaca_data_feed,
+        )
+        IngestionGateway(store).ingest(PriceCollector().normalize(records))
+        journal = build_trade_journal(store, utcnow(), model_version=args.model)
+        report = attribute_performance(journal)
+    except Exception as exc:
+        print(f"evaluate failed: {exc}")
+        return 1
+
+    if args.reflect and settings.anthropic_api_key:
+        from market_trader.reasoning import anthropic_provider_from_settings
+
+        print(reflect(report, journal, anthropic_provider_from_settings(settings)))
+    else:
+        print(evaluation_summary_markdown(report))
+    return 0
+
+
 def _print_cycle(result: CycleResult, *, dry: bool) -> None:
     tag = "dry-run" if dry else "live-paper"
     print(f"cycle {result.as_of.isoformat()}  [{tag}]")
@@ -498,6 +547,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser(
         "score-predictions", help="grade logged predictions vs realised outcomes"
     ).set_defaults(func=cmd_score_predictions)
+    evaluate = sub.add_parser(
+        "evaluate", help="attribute graded decisions to signals + regimes (self-evaluation)"
+    )
+    evaluate.add_argument(
+        "--model", default="composite", help="model_version (e.g. composite, news_sleeve)"
+    )
+    evaluate.add_argument("--reflect", action="store_true", help="add an LLM post-mortem")
+    evaluate.set_defaults(func=cmd_evaluate)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
     cycle.add_argument(
