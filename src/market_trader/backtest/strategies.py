@@ -56,12 +56,13 @@ class MomentumStrategy:
 
 @dataclass
 class CompositeBacktestStrategy:
-    """Price-only backtest proxy for the live daily book.
+    """Price z-score composite of momentum / mean-reversion / volatility (top-N,
+    inverse-vol weighted) — the same shape as the live cycle.
 
-    An equal-weight z-score composite of momentum / mean-reversion / volatility,
-    top-N by score, inverse-vol weighted — the same shape as the live cycle
-    (minus the sparse flow/news features), so backtesting it answers "has this
-    strategy historically worked?" net of costs against the baselines.
+    When ``insider_scores`` (a point-in-time ``{rebalance -> (symbol -> net buys)}``
+    map) is supplied, the validated insider signal joins as an equal 4th z-scored
+    component, so a backtest can A/B the price-only book against the insider-tilted
+    one net of costs. Absent it, behaviour is the original price-only composite.
     """
 
     momentum_lookback: int = 60
@@ -69,6 +70,7 @@ class CompositeBacktestStrategy:
     vol_window: int = 20
     max_positions: int = 20
     top_quantile: float = 0.3
+    insider_scores: dict[datetime, pd.Series] | None = None
     name: str = "composite"
 
     def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
@@ -85,7 +87,14 @@ class CompositeBacktestStrategy:
         ).dropna()
         if feat.empty:
             return {}
-        composite = feat[["mom", "meanrev", "vol"]].apply(_zscore, axis=0).mean(axis=1)
+        zscores = feat[["mom", "meanrev", "vol"]].apply(_zscore, axis=0)
+        # Blend the validated insider signal as an equal 4th component when this
+        # rebalance's scores were precomputed point-in-time; absent that, the composite
+        # is the original price-only one (an all-zero insider column can't reorder it).
+        scores = None if self.insider_scores is None else self.insider_scores.get(as_of)
+        if scores is not None:
+            zscores = zscores.assign(insider=_zscore(scores.reindex(feat.index).fillna(0.0)))
+        composite = zscores.mean(axis=1)
         k = max(1, min(self.max_positions, int(len(composite) * self.top_quantile)))
         winners = list(composite.sort_values(ascending=False).head(k).index)
 
