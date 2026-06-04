@@ -163,7 +163,7 @@ class Settings(BaseSettings):
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.
     anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-opus-4-8"
     llm_daily_call_budget: int = 200  # cadence/cost gate; enforced in Phase 2+
 
     def assert_live_allowed(self) -> None:
