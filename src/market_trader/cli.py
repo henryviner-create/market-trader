@@ -560,6 +560,47 @@ def cmd_ingest_filings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_signal_ic(args: argparse.Namespace) -> int:
+    """Measure each signal's out-of-sample information coefficient (IC) over history."""
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.core.time import utcnow
+    from market_trader.features import FeatureStore, default_features
+    from market_trader.runtime.signal_ic import measure_signal_ic
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        fs = FeatureStore(store, default_features())
+        ics = measure_signal_ic(
+            store,
+            fs,
+            resolve_universe(settings.universe),
+            utcnow(),
+            horizon_days=args.horizon,
+            max_dates=args.dates,
+        )
+    except Exception as exc:
+        print(f"signal-ic failed: {exc}")
+        return 1
+    if not ics:
+        print(
+            "signal-ic: no gradable history — backfill prices/filings first (simulate, ingest-filings)"
+        )
+        return 0
+    print(f"signal-ic [horizon={args.horizon}d, per-date cross-sectional rank IC]")
+    for sig, r in sorted(ics.items(), key=lambda kv: abs(kv[1].mean_ic), reverse=True):
+        flag = "  <- significant" if abs(r.ic_t_stat) >= 2.0 else ""
+        print(
+            f"  {sig:24} IC={r.mean_ic:+.4f}  t={r.ic_t_stat:+.2f}  "
+            f"hit={r.hit_rate:.0%}  n_dates={r.n_dates}{flag}"
+        )
+    return 0
+
+
 def _print_cycle(result: CycleResult, *, dry: bool) -> None:
     tag = "dry-run" if dry else "live-paper"
     print(f"cycle {result.as_of.isoformat()}  [{tag}]")
@@ -672,6 +713,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--budget", type=float, default=600.0, help="wall-clock fetch budget (seconds)"
     )
     ingest_filings.set_defaults(func=cmd_ingest_filings)
+
+    signal_ic = sub.add_parser(
+        "signal-ic", help="measure each signal's out-of-sample IC over history"
+    )
+    signal_ic.add_argument("--horizon", type=int, default=5, help="forward-return horizon (days)")
+    signal_ic.add_argument("--dates", type=int, default=120, help="max decision dates to sample")
+    signal_ic.set_defaults(func=cmd_signal_ic)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
     cycle.add_argument(
