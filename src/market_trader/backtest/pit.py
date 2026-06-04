@@ -69,3 +69,38 @@ class StorePriceView:
             return []
         last = panel.ffill().iloc[-1]
         return [str(c) for c in panel.columns if pd.notna(last[c])]
+
+
+@dataclass
+class PanelPriceView:
+    """Point-in-time view backed by a precomputed panel — no per-call DB query.
+
+    Equivalent to :class:`StorePriceView` for the price dataset, where an
+    observation's knowledge time equals its event time, so slicing the panel at
+    ``event_time <= as_of`` surfaces exactly what was knowable then. Built once
+    and sliced per rebalance, it removes the O(rebalances x history) store
+    re-query that made multi-year backtests crawl.
+    """
+
+    panel: pd.DataFrame
+    as_of_time: datetime
+
+    @property
+    def as_of(self) -> datetime:
+        return self.as_of_time
+
+    def price_panel(self) -> pd.DataFrame:
+        return self.panel.loc[self.panel.index <= self.as_of_time]
+
+    def returns_panel(self) -> pd.DataFrame:
+        panel = self.price_panel()
+        if panel.empty:
+            return panel
+        return panel.pct_change().iloc[1:]
+
+    def universe(self) -> list[str]:
+        panel = self.price_panel()
+        if panel.empty:
+            return []
+        last = panel.ffill().iloc[-1]
+        return [str(c) for c in panel.columns if pd.notna(last[c])]

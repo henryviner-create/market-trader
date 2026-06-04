@@ -469,10 +469,10 @@ def cmd_simulate(args: argparse.Namespace) -> int:
 
     import pandas as pd
 
-    from market_trader.backtest.engine import compare_to_baselines, run_backtest
+    from market_trader.backtest.engine import buy_and_hold_summary, run_backtest
     from market_trader.backtest.pit import observations_to_price_frame
     from market_trader.backtest.simulation import monte_carlo_report
-    from market_trader.backtest.strategies import CompositeBacktestStrategy
+    from market_trader.backtest.strategies import CompositeBacktestStrategy, EqualWeightStrategy
     from market_trader.collectors import IngestionGateway, PriceCollector
     from market_trader.collectors.alpaca import AlpacaDataClient
     from market_trader.core.synthetic import PRICE_DATASET
@@ -498,8 +498,13 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             print("simulate: not enough price history (try a larger --days)")
             return 1
         strategy = CompositeBacktestStrategy(max_positions=settings.max_positions or 20)
-        summaries = compare_to_baselines(store, strategy, schedule)
-        result = run_backtest(store, strategy, schedule)
+        result = run_backtest(store, strategy, schedule)  # the candidate, once
+        equal_weight = run_backtest(store, EqualWeightStrategy(), schedule)
+        summaries = {
+            strategy.name: result.summary,
+            "equal_weight": equal_weight.summary,
+            "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
+        }
         sim = monte_carlo_report(result.net_returns.to_numpy(dtype=float))
     except Exception as exc:
         print(f"simulate failed: {exc}")

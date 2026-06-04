@@ -17,7 +17,7 @@ import pandas as pd
 
 from market_trader.backtest.costs import BasicCostModel, CostModel, one_way_turnover
 from market_trader.backtest.metrics import TRADING_DAYS, PerformanceSummary, summarize
-from market_trader.backtest.pit import StorePriceView, observations_to_price_frame
+from market_trader.backtest.pit import PanelPriceView, observations_to_price_frame
 from market_trader.backtest.strategies import EqualWeightStrategy
 from market_trader.backtest.types import Strategy, Weights
 from market_trader.core.synthetic import PRICE_DATASET
@@ -62,9 +62,15 @@ def run_backtest(
     cost_model = cost_model or BasicCostModel()
     rebalances = sorted(schedule)
 
-    returns = _realized_returns(store, dataset, price_field)
-    if returns.empty:
+    # Load the point-in-time panel ONCE, then slice it per rebalance. Querying the
+    # store at every rebalance (the old StorePriceView path) re-pulled and
+    # re-pivoted the whole history each time — O(rebalances x history), the reason a
+    # multi-year backtest crawled. Prices have knowledge_time == event_time, so a
+    # panel sliced at event_time <= t is exactly what was knowable at t.
+    panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=dataset), price_field)
+    if panel.empty:
         raise ValueError("no price data in store")
+    returns = panel.pct_change()
     index = returns.index
 
     gross = pd.Series(0.0, index=index)
@@ -73,7 +79,7 @@ def run_backtest(
 
     prev_w: Weights = {}
     for i, t in enumerate(rebalances):
-        view = StorePriceView(store, as_of_time=t, dataset=dataset, price_field=price_field)
+        view = PanelPriceView(panel, t)
         w = strategy.target_weights(view, t)
         turnover_by_date[t] = one_way_turnover(prev_w, w)
         cost = cost_model.turnover_cost(prev_w, w)
