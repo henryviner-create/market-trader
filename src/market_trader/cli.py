@@ -658,21 +658,29 @@ def cmd_build_universe(args: argparse.Namespace) -> int:
 
     from market_trader.collectors.alpaca import AlpacaDataClient
     from market_trader.collectors.edgar import EdgarClient
+    from market_trader.execution.alpaca import AlpacaBroker
     from market_trader.universe.liquid import LIQUID_LARGE_CAP
     from market_trader.universe.screen import screen_for_liquidity
 
     try:
-        candidates = EdgarClient(user_agent=settings.sec_user_agent).ticker_universe()
+        # Candidates: Alpaca-tradable AND on file with the SEC. The intersection keeps only
+        # valid market-data symbols (no malformed tickers that 400 a whole bars batch, no
+        # ETFs) that can also have Form-4s.
+        broker = AlpacaBroker(settings.alpaca_key_id, settings.alpaca_secret_key)
+        filers = set(EdgarClient(user_agent=settings.sec_user_agent).ticker_universe())
+        candidates = sorted(set(broker.list_us_equities()) & filers)
         data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
         end = date.today()
         start = end - timedelta(days=args.window)
         bars: dict[str, list[dict[str, Any]]] = {}
-        for i in range(0, len(candidates), 200):
+        batch_errors = 0
+        for i in range(0, len(candidates), 100):
             try:
                 fetched = data.fetch_daily_bars(
-                    candidates[i : i + 200], start=start, end=end, feed=settings.alpaca_data_feed
+                    candidates[i : i + 100], start=start, end=end, feed=settings.alpaca_data_feed
                 )
-            except Exception:  # one bad batch never aborts the whole screen
+            except Exception:  # never let one bad batch abort the whole screen
+                batch_errors += 1
                 continue
             for rec in fetched:
                 bars.setdefault(str(rec["symbol"]), []).append(rec)
@@ -688,8 +696,8 @@ def cmd_build_universe(args: argparse.Namespace) -> int:
         print(f"build-universe failed: {exc}")
         return 1
     print(
-        f"build-universe: {len(selected)} names from {len(candidates)} filers "
-        f"({len(bars)} had bars), feed={settings.alpaca_data_feed}"
+        f"build-universe: {len(selected)} names from {len(candidates)} candidates "
+        f"({len(bars)} had bars, {batch_errors} batch errors), feed={settings.alpaca_data_feed}"
     )
     if selected:
         print(",".join(selected))
