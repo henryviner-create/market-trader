@@ -15,7 +15,7 @@ import pytest
 
 from market_trader.config import Settings
 from market_trader.core.synthetic import PRICE_DATASET, synthetic_price_observations
-from market_trader.execution.broker import Order, OrderSide, OrderStatus
+from market_trader.execution.broker import Order, OrderSide, OrderStatus, OrderType
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.reasoning import MockLLMProvider
 from market_trader.runtime import run_dry_paper_cycle, run_live_paper_cycle, run_paper_cycle
@@ -235,3 +235,35 @@ def test_run_live_paper_cycle_refuses_live_endpoint_unless_armed() -> None:
     )
     with pytest.raises(RuntimeError):
         run_live_paper_cycle(wants_live_endpoint)
+
+
+def test_run_paper_cycle_cancels_stale_open_orders_before_rebalancing() -> None:
+    # A still-open order from a prior run is cancelled before the new book is
+    # placed (so the broker can't reject the fresh orders as a wash trade against
+    # it) — but a sleeve-reserved name's order is left untouched.
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols)
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+    # Resting (non-marketable) limit orders so they sit open rather than fill.
+    broker.submit_order(
+        Order("stale", "S1", OrderSide.BUY, 1.0, OrderType.LIMIT, limit_price=prices["S1"] * 0.5)
+    )
+    broker.submit_order(
+        Order("sleeve", "S3", OrderSide.BUY, 1.0, OrderType.LIMIT, limit_price=prices["S3"] * 0.5)
+    )
+    assert {o.client_order_id for o in broker.get_open_orders()} == {"stale", "sleeve"}
+
+    run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        reserved_symbols=frozenset({"S3"}),
+        cancel_stale_orders=True,
+    )
+
+    open_ids = {o.client_order_id for o in broker.get_open_orders()}
+    assert "stale" not in open_ids  # ordinary stale order cancelled before rebalancing
+    assert "sleeve" in open_ids  # reserved (sleeve) name's order left alone
