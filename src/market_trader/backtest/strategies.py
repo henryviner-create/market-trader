@@ -10,7 +10,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+import pandas as pd
+
 from market_trader.backtest.types import PointInTimeView, Weights
+
+
+def _zscore(s: pd.Series) -> pd.Series:
+    sd = s.std(ddof=0)
+    if pd.isna(sd) or sd == 0:
+        return pd.Series(0.0, index=s.index)
+    return (s - s.mean()) / sd
 
 
 @dataclass
@@ -43,3 +52,49 @@ class MomentumStrategy:
         winners = [str(s) for s in momentum.sort_values(ascending=False).head(k).index]
         w = 1.0 / len(winners)
         return {s: w for s in winners}
+
+
+@dataclass
+class CompositeBacktestStrategy:
+    """Price-only backtest proxy for the live daily book.
+
+    An equal-weight z-score composite of momentum / mean-reversion / volatility,
+    top-N by score, inverse-vol weighted — the same shape as the live cycle
+    (minus the sparse flow/news features), so backtesting it answers "has this
+    strategy historically worked?" net of costs against the baselines.
+    """
+
+    momentum_lookback: int = 60
+    meanrev_lookback: int = 5
+    vol_window: int = 20
+    max_positions: int = 20
+    top_quantile: float = 0.3
+    name: str = "composite"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        panel = view.price_panel().ffill()
+        if panel.shape[0] <= self.momentum_lookback + 1:
+            return EqualWeightStrategy().target_weights(view, as_of)
+        rets = panel.pct_change()
+        feat = pd.DataFrame(
+            {
+                "mom": panel.iloc[-1] / panel.iloc[-(self.momentum_lookback + 1)] - 1.0,
+                "meanrev": -(panel.iloc[-1] / panel.iloc[-(self.meanrev_lookback + 1)] - 1.0),
+                "vol": rets.iloc[-self.vol_window :].std(),
+            }
+        ).dropna()
+        if feat.empty:
+            return {}
+        composite = feat[["mom", "meanrev", "vol"]].apply(_zscore, axis=0).mean(axis=1)
+        k = max(1, min(self.max_positions, int(len(composite) * self.top_quantile)))
+        winners = list(composite.sort_values(ascending=False).head(k).index)
+
+        vols = feat["vol"].reindex(winners)
+        inv = (1.0 / vols).where(vols > 0)
+        if inv.notna().any():
+            inv = inv.fillna(inv.mean())
+            total = float(inv.sum())
+            if total > 0:
+                return {str(s): float(inv.loc[s] / total) for s in winners}
+        w = 1.0 / len(winners)
+        return {str(s): w for s in winners}

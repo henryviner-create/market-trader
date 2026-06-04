@@ -457,6 +457,71 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_simulate(args: argparse.Namespace) -> int:
+    """Backtest the live strategy over history vs baselines, with a Monte-Carlo downside."""
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+    if not (settings.alpaca_key_id and settings.alpaca_secret_key):
+        print("simulate: Alpaca keys not set")
+        return 1
+
+    from datetime import date, timedelta
+
+    import pandas as pd
+
+    from market_trader.backtest.engine import compare_to_baselines, run_backtest
+    from market_trader.backtest.pit import observations_to_price_frame
+    from market_trader.backtest.simulation import monte_carlo_report
+    from market_trader.backtest.strategies import CompositeBacktestStrategy
+    from market_trader.collectors import IngestionGateway, PriceCollector
+    from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.core.synthetic import PRICE_DATASET
+    from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        end = date.today()
+        data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
+        records = data.fetch_daily_bars(
+            resolve_universe(settings.universe),
+            start=end - timedelta(days=args.days),
+            end=end,
+            feed=settings.alpaca_data_feed,
+        )
+        IngestionGateway(store).ingest(PriceCollector().normalize(records))
+        panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=PRICE_DATASET))
+        schedule = [ts.to_pydatetime() for ts in pd.DatetimeIndex(panel.index)][60::5]
+        if len(schedule) < 5:
+            print("simulate: not enough price history (try a larger --days)")
+            return 1
+        strategy = CompositeBacktestStrategy(max_positions=settings.max_positions or 20)
+        summaries = compare_to_baselines(store, strategy, schedule)
+        result = run_backtest(store, strategy, schedule)
+        sim = monte_carlo_report(result.net_returns.to_numpy(dtype=float))
+    except Exception as exc:
+        print(f"simulate failed: {exc}")
+        return 1
+
+    print(f"simulate [composite, {len(schedule)} rebalances over ~{args.days}d, net of costs]")
+    for name, s in summaries.items():
+        print(
+            f"  {name:14} ann_return={s.ann_return:+.1%}  sharpe={s.sharpe:+.2f}  "
+            f"max_dd={s.max_drawdown:.1%}  hit={s.hit_rate:.0%}"
+        )
+    print(
+        f"  Monte-Carlo ({sim.n_sims} paths): total return q05/q50/q95 = "
+        f"{sim.total_return_q05:+.1%} / {sim.total_return_q50:+.1%} / {sim.total_return_q95:+.1%}"
+    )
+    print(
+        f"    worst-5% drawdown {sim.max_drawdown_q05:.1%}; median Sharpe "
+        f"{sim.sharpe_q50:+.2f}; P(profit) {sim.prob_positive:.0%}"
+    )
+    return 0
+
+
 def _print_cycle(result: CycleResult, *, dry: bool) -> None:
     tag = "dry-run" if dry else "live-paper"
     print(f"cycle {result.as_of.isoformat()}  [{tag}]")
@@ -555,6 +620,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     evaluate.add_argument("--reflect", action="store_true", help="add an LLM post-mortem")
     evaluate.set_defaults(func=cmd_evaluate)
+    simulate = sub.add_parser(
+        "simulate", help="backtest the strategy over history vs baselines + Monte-Carlo downside"
+    )
+    simulate.add_argument("--days", type=int, default=500, help="history window in days")
+    simulate.set_defaults(func=cmd_simulate)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
     cycle.add_argument(
