@@ -475,18 +475,22 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     from market_trader.backtest.strategies import CompositeBacktestStrategy, EqualWeightStrategy
     from market_trader.collectors import IngestionGateway, PriceCollector
     from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.collectors.edgar import FORM4_DATASET
     from market_trader.core.synthetic import PRICE_DATASET
     from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.features.flow import InsiderNetBuys
+    from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
     from market_trader.universe.liquid import resolve_universe
 
     try:
         store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
         store.create_schema()
+        universe = resolve_universe(settings.universe)
         end = date.today()
         data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
         records = data.fetch_daily_bars(
-            resolve_universe(settings.universe),
+            universe,
             start=end - timedelta(days=args.days),
             end=end,
             feed=settings.alpaca_data_feed,
@@ -497,12 +501,24 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         if len(schedule) < 5:
             print("simulate: not enough price history (try a larger --days)")
             return 1
-        strategy = CompositeBacktestStrategy(max_positions=settings.max_positions or 20)
-        result = run_backtest(store, strategy, schedule)  # the candidate, once
-        equal_weight = run_backtest(store, EqualWeightStrategy(), schedule)
+        # Point-in-time insider scores per rebalance (only Form-4 obs loaded in-memory, so
+        # the per-date compute is cheap), to A/B the price-only composite against the same
+        # book tilted by the validated insider signal — net of costs.
+        mem = InMemoryBitemporalStore()
+        mem.add_many(store.as_of(DISTANT_FUTURE, dataset=FORM4_DATASET))
+        insider = InsiderNetBuys(window_days=90)
+        insider_scores = {t: insider.compute(mem, t, universe) for t in schedule}
+
+        max_pos = settings.max_positions or 20
+        base = CompositeBacktestStrategy(max_positions=max_pos)
+        tilted = CompositeBacktestStrategy(
+            max_positions=max_pos, insider_scores=insider_scores, name="composite+insider"
+        )
+        result = run_backtest(store, tilted, schedule)  # report Monte-Carlo on the candidate
         summaries = {
-            strategy.name: result.summary,
-            "equal_weight": equal_weight.summary,
+            base.name: run_backtest(store, base, schedule).summary,
+            tilted.name: result.summary,
+            "equal_weight": run_backtest(store, EqualWeightStrategy(), schedule).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
         }
         sim = monte_carlo_report(result.net_returns.to_numpy(dtype=float))
@@ -510,12 +526,18 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         print(f"simulate failed: {exc}")
         return 1
 
-    print(f"simulate [composite, {len(schedule)} rebalances over ~{args.days}d, net of costs]")
+    print(f"simulate [{len(schedule)} rebalances over ~{args.days}d, net of costs]")
     for name, s in summaries.items():
         print(
-            f"  {name:14} ann_return={s.ann_return:+.1%}  sharpe={s.sharpe:+.2f}  "
+            f"  {name:18} ann_return={s.ann_return:+.1%}  sharpe={s.sharpe:+.2f}  "
             f"max_dd={s.max_drawdown:.1%}  hit={s.hit_rate:.0%}"
         )
+    ins_s, base_s = summaries["composite+insider"], summaries["composite"]
+    print(
+        f"  insider effect: sharpe {ins_s.sharpe - base_s.sharpe:+.2f}, "
+        f"max_dd {ins_s.max_drawdown - base_s.max_drawdown:+.1%} (+ = shallower), "
+        f"ann_return {ins_s.ann_return - base_s.ann_return:+.1%}"
+    )
     print(
         f"  Monte-Carlo ({sim.n_sims} paths): total return q05/q50/q95 = "
         f"{sim.total_return_q05:+.1%} / {sim.total_return_q50:+.1%} / {sim.total_return_q95:+.1%}"
