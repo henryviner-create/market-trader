@@ -323,6 +323,7 @@ def run_live_paper_cycle(
         llm=llm,
         feature_store=fs,
         score_fn=score_fn,
+        top_quantile=settings.top_quantile,
         max_positions=settings.max_positions or None,  # 0 -> uncapped
         exit_band_multiple=settings.exit_band_multiple,
         risk_weighting=settings.risk_weighting,
