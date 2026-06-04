@@ -10,6 +10,7 @@ network); the in-memory :class:`PaperBroker` drives the test loop.
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -37,6 +38,17 @@ _STATUS_MAP = {
 }
 
 
+class AlpacaError(RuntimeError):
+    """An Alpaca REST call failed; carries the HTTP status and response body so the
+    real reason (e.g. ``insufficient buying power``) reaches the logs instead of a
+    bare ``403: Forbidden``."""
+
+    def __init__(self, status: int, body: str, *, method: str, path: str) -> None:
+        self.status = status
+        self.body = body
+        super().__init__(f"Alpaca {method} {path} failed: HTTP {status}: {body or '(no body)'}")
+
+
 class AlpacaBroker:
     def __init__(
         self,
@@ -62,8 +74,15 @@ class AlpacaBroker:
         req = urllib.request.Request(
             self._base + path, data=data, method=method, headers=self._headers
         )
-        with urllib.request.urlopen(req, timeout=self._timeout) as resp:
-            raw = resp.read()
+        try:
+            with urllib.request.urlopen(req, timeout=self._timeout) as resp:
+                raw = resp.read()
+        except urllib.error.HTTPError as exc:
+            # Alpaca puts the real reason (e.g. "insufficient buying power") in the
+            # response body; the bare HTTPError str is just "403: Forbidden". Read
+            # it and surface it, or every order rejection looks identical.
+            detail = exc.read().decode("utf-8", "replace").strip()
+            raise AlpacaError(exc.code, detail, method=method, path=path) from exc
         return json.loads(raw) if raw else {}
 
     def submit_order(self, order: Order) -> Order:

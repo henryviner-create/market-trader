@@ -200,3 +200,42 @@ def test_reconcile_detects_divergence() -> None:
     symbols = {d.symbol for d in divergences}
     assert "B" in symbols and "C" in symbols  # missing / unexpected
     assert "A" not in symbols  # matches
+
+
+class _HoldingBroker:
+    """Records submitted orders and starts holding the given positions — for the
+    sell-before-buy ordering test."""
+
+    def __init__(self, positions: dict[str, float], *, equity: float = 100_000.0) -> None:
+        self._positions = positions
+        self._acct = Account(equity, equity, equity, last_equity=equity)
+        self.submitted: list[Order] = []
+
+    def get_account(self) -> Account:
+        return self._acct
+
+    def get_positions(self) -> list[Position]:
+        return [Position(s, q, 0.0) for s, q in self._positions.items()]
+
+    def get_open_orders(self) -> list[Order]:
+        return []
+
+    def submit_order(self, order: Order) -> Order:
+        self.submitted.append(order)
+        return replace(order, status=OrderStatus.FILLED, filled_qty=order.qty)
+
+    def cancel_order(self, client_order_id: str) -> None:
+        pass
+
+
+def test_rebalance_submits_sells_before_buys() -> None:
+    # Holding OLD (flattened to 0) while entering NEW: the SELL must be submitted
+    # before the BUY so its freed cash funds the entry — otherwise a fully-invested
+    # account gets a 403 "insufficient buying power". The target lists the BUY
+    # first on purpose, so only the engine's reordering can put the sell first.
+    broker = _HoldingBroker({"OLD": 100.0})
+    orders = _engine(broker, ceiling=100_000.0).rebalance(
+        {"NEW": 0.5, "OLD": 0.0}, {"NEW": 100.0, "OLD": 50.0}, as_of=T
+    )
+    assert [o.side for o in broker.submitted] == [OrderSide.SELL, OrderSide.BUY]
+    assert len(orders) == 2

@@ -10,6 +10,7 @@ the signal tier, not here.
 from __future__ import annotations
 
 import json
+import time
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Sequence
@@ -21,9 +22,12 @@ from pydantic import BaseModel
 from market_trader.collectors.base import Collector
 from market_trader.core.schema import Observation
 from market_trader.core.time import day_close
+from market_trader.observability import get_logger
 
 NEWS_DATASET = "news.article"
 GDELT_DOC_API = "https://api.gdeltproject.org/api/v2/doc/doc"
+
+_log = get_logger("gdelt")
 
 
 class NewsArticle(BaseModel):
@@ -65,9 +69,9 @@ class GdeltNewsCollector(Collector):
 NewsTransport = Callable[[str], dict[str, Any]]
 
 
-def _gdelt_get(url: str) -> dict[str, Any]:
+def _gdelt_get(url: str, *, timeout: float = 10.0) -> dict[str, Any]:
     request = urllib.request.Request(url, headers={"User-Agent": "market-trader/1.0"})
-    with urllib.request.urlopen(request, timeout=30) as resp:  # fixed https host
+    with urllib.request.urlopen(request, timeout=timeout) as resp:  # fixed https host
         raw = resp.read()
     return json.loads(raw) if raw else {}
 
@@ -95,10 +99,13 @@ class GdeltClient:
         base_url: str = GDELT_DOC_API,
         transport: NewsTransport | None = None,
         max_records: int = 50,
+        timeout_seconds: float = 10.0,
+        budget_seconds: float = 45.0,
     ) -> None:
         self._base = base_url
-        self._get = transport or _gdelt_get
+        self._get = transport or (lambda url: _gdelt_get(url, timeout=timeout_seconds))
         self._max = max_records
+        self._budget = budget_seconds
 
     def fetch_articles(
         self, query: str, *, symbol: str | None = None, timespan: str = "3d"
@@ -129,11 +136,35 @@ class GdeltClient:
     def fetch_for_symbols(
         self, symbols: Sequence[str], *, timespan: str = "3d"
     ) -> list[NewsArticle]:
-        """Best-effort per-symbol fetch; one symbol failing never aborts the batch."""
+        """Best-effort per-symbol fetch, bounded by a wall-clock budget.
+
+        One symbol erroring never aborts the batch. The budget is the load-bearing
+        part: GDELT's free API throttles, and a per-symbol sweep over a ~140-name
+        universe could otherwise stall a whole trading cycle for minutes. Once the
+        budget elapses the sweep stops and the remaining names are skipped this
+        cycle — news is a best-effort overlay, never on the critical path.
+        """
         out: list[NewsArticle] = []
+        start = time.monotonic()
+        fetched = 0
         for s in symbols:
+            if time.monotonic() - start > self._budget:
+                _log.warning(
+                    "gdelt_budget_exceeded",
+                    fetched=fetched,
+                    total=len(symbols),
+                    budget_seconds=self._budget,
+                )
+                break
             try:
                 out.extend(self.fetch_articles(s, symbol=s, timespan=timespan))
+                fetched += 1
             except Exception:  # best-effort batch: skip a symbol that errors
                 continue
+        _log.info(
+            "gdelt_fetch",
+            symbols=fetched,
+            articles=len(out),
+            elapsed_s=round(time.monotonic() - start, 1),
+        )
         return out

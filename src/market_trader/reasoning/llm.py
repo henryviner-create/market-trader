@@ -48,7 +48,7 @@ class AnthropicProvider(LLMProvider):
         self,
         api_key: str,
         *,
-        model: str = "claude-sonnet-4-6",
+        model: str = "claude-opus-4-8",
         base_url: str = "https://api.anthropic.com",
         timeout: float = 60.0,
     ) -> None:

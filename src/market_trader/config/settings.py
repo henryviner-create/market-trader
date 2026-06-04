@@ -100,6 +100,11 @@ class Settings(BaseSettings):
     news_enabled: bool = False
     news_window_days: int = 7
     news_timespan: str = "3d"
+    # Bound the per-cycle GDELT sweep so a slow/throttling free API can never stall
+    # a trading cycle: each request times out fast, and the whole per-symbol sweep
+    # is capped by a wall-clock budget (remaining names are skipped that cycle).
+    news_fetch_timeout_seconds: float = 10.0
+    news_fetch_budget_seconds: float = 45.0
 
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
@@ -163,7 +168,7 @@ class Settings(BaseSettings):
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.
     anthropic_api_key: str | None = None
-    anthropic_model: str = "claude-sonnet-4-6"
+    anthropic_model: str = "claude-opus-4-8"
     llm_daily_call_budget: int = 200  # cadence/cost gate; enforced in Phase 2+
 
     def assert_live_allowed(self) -> None:
