@@ -55,6 +55,13 @@ class Settings(BaseSettings):
     max_daily_loss: float = 0.0
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
+    # Risk-based sizing (the drawdown governor; see portfolio/sizing.py). The DD cap is
+    # translated into a portfolio volatility target (halved for fat tails); a fractional
+    # -Kelly tilt sets relative conviction; regime_derisk_factor shrinks the target in
+    # risk-off. Inert until the cycle routes sizing through `size_book` (a later phase).
+    target_vol: float = 0.10  # annualized portfolio volatility target
+    kelly_fraction: float = 0.25  # fraction of full Kelly (heavy haircut; noisy mu)
+    regime_derisk_factor: float = 0.5  # multiply target_vol/net by this when risk-off
 
     # --- Universe & portfolio breadth -----------------------------------
     # `universe` selects what to scan each cycle: "liquid" (broad, ~110 names

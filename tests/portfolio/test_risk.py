@@ -42,6 +42,24 @@ def test_check_order_rejects_over_limit_positions_and_gross() -> None:
     check_order("AAPL", 0.05, {"MSFT": 0.05}, limits)  # within limits: no raise
 
 
+def test_apply_risk_limits_enforces_net_exposure() -> None:
+    # A heavily-long book is trimmed toward the net cap (gross may shrink); the short
+    # leg is left intact. Per-name/gross are generous so only the net cap bites.
+    out = apply_risk_limits(
+        {"A": 0.3, "B": 0.3, "C": -0.1},  # net +0.5
+        RiskLimits(max_position_weight=1.0, max_gross_exposure=10.0, max_net_exposure=0.2),
+    )
+    assert abs(sum(out.values())) <= 0.2 + 1e-9  # net pulled to the cap
+    assert out["C"] == -0.1  # the short (non-dominant) side untouched
+
+
+def test_check_order_rejects_net_breach() -> None:
+    limits = RiskLimits(max_position_weight=1.0, max_gross_exposure=10.0, max_net_exposure=0.3)
+    with pytest.raises(RiskLimitBreach):
+        check_order("AAPL", 0.3, {"MSFT": 0.2}, limits)  # net 0.5 > 0.3
+    check_order("AAPL", 0.2, {"MSFT": -0.1}, limits)  # net 0.1 within cap: no raise
+
+
 def test_drawdown_circuit_breaker_trips_and_latches() -> None:
     cb = DrawdownCircuitBreaker(max_drawdown=0.20)
     assert not cb.update(100.0)
