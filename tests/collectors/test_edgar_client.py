@@ -99,8 +99,16 @@ def test_fetch_for_symbols_follows_filings_files_shards() -> None:
                     "primaryDocument": ["recent-form4.xml"],
                 },
                 "files": [
-                    {"name": "shard-recent.json", "filingFrom": "2021-01-01", "filingTo": "2022-12-31"},
-                    {"name": "shard-ancient.json", "filingFrom": "2010-01-01", "filingTo": "2012-12-31"},
+                    {
+                        "name": "shard-recent.json",
+                        "filingFrom": "2021-01-01",
+                        "filingTo": "2022-12-31",
+                    },
+                    {
+                        "name": "shard-ancient.json",
+                        "filingFrom": "2010-01-01",
+                        "filingTo": "2012-12-31",
+                    },
                 ],
             }
         }
