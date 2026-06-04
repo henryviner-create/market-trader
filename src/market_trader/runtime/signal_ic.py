@@ -22,7 +22,7 @@ import pandas as pd
 
 from market_trader.backtest.pit import observations_to_price_frame
 from market_trader.core.synthetic import PRICE_DATASET
-from market_trader.features.base import FeatureStore
+from market_trader.features.base import Feature
 from market_trader.runtime.learning import _forward_returns_at  # matured-horizon forward returns
 from market_trader.storage.bitemporal import BitemporalStore
 
@@ -56,7 +56,7 @@ def _summarize(signal: str, ics: list[float], n_obs: int) -> SignalIC:
 
 def measure_signal_ic(
     store: BitemporalStore,
-    feature_store: FeatureStore,
+    features: Sequence[Feature],
     symbols: Sequence[str],
     as_of: datetime,
     *,
@@ -69,7 +69,9 @@ def measure_signal_ic(
     """Per-signal cross-sectional rank IC vs forward returns, averaged over dates.
 
     Returns a mapping ``signal -> SignalIC``; signals with no usable variation on a
-    date are skipped that date, and signals with no usable dates are omitted.
+    date are skipped that date, and signals with no usable dates are omitted. Note: if
+    ``every < horizon_days`` the forward windows overlap, which inflates the t-stat —
+    sample at ``every >= horizon_days`` for independent (honest) significance.
     """
     panel = observations_to_price_frame(store.as_of(as_of, dataset=PRICE_DATASET))
     if panel.empty:
@@ -82,7 +84,18 @@ def measure_signal_ic(
         fwd = _forward_returns_at(panel, d, horizon_days)
         if fwd.empty:
             continue
-        matrix = feature_store.compute_matrix(d, syms)
+        # Price-derived features compute from a cheap in-memory slice of the panel
+        # (no per-date DB query or re-pivot); other features read their own dataset.
+        price_slice = panel.loc[panel.index <= d]
+        cols: dict[str, pd.Series] = {}
+        for f in features:
+            from_panel = getattr(f, "_from_panel", None)
+            cols[f.name] = (
+                from_panel(price_slice, syms)
+                if from_panel is not None
+                else f.compute(store, d, syms)
+            )
+        matrix = pd.DataFrame(cols)
         if matrix.empty:
             continue
         common = [s for s in matrix.index if s in fwd.index and pd.notna(fwd[s])]
@@ -90,11 +103,11 @@ def measure_signal_ic(
             continue
         ranked_fwd = fwd.loc[common].rank()
         for col in matrix.columns:
-            f = matrix.loc[common, col]
-            sd = f.std(skipna=True)
-            if int(f.notna().sum()) < min_names or pd.isna(sd) or sd == 0:
+            vals = matrix.loc[common, col]
+            sd = vals.std(skipna=True)
+            if int(vals.notna().sum()) < min_names or pd.isna(sd) or sd == 0:
                 continue
-            ic = float(f.rank().corr(ranked_fwd))  # Spearman = Pearson of ranks
+            ic = float(vals.rank().corr(ranked_fwd))  # Spearman = Pearson of ranks
             if not pd.isna(ic):
                 per_date[str(col)].append(ic)
                 n_obs[str(col)] += len(common)

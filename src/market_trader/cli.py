@@ -566,7 +566,7 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
     from market_trader.core.time import DISTANT_FUTURE, utcnow
-    from market_trader.features import FeatureStore, default_features
+    from market_trader.features import default_features
     from market_trader.runtime.signal_ic import measure_signal_ic
     from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
@@ -575,18 +575,17 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     try:
         db = SqlAlchemyBitemporalStore.from_url(settings.database_url)
         db.create_schema()
-        # Load the store into memory ONCE so per-date feature computation doesn't
-        # re-query the DB at every sampled date (the O(dates x history) trap that
-        # made this — and the backtest — crawl). One pass over all datasets.
+        # Load the store into memory ONCE so the per-date flow-feature lookups (and the
+        # one-time price-panel build) don't re-query the DB at every sampled date.
         store = InMemoryBitemporalStore()
         store.add_many(db.as_of(DISTANT_FUTURE))
-        fs = FeatureStore(store, default_features())
         ics = measure_signal_ic(
             store,
-            fs,
+            default_features(),
             resolve_universe(settings.universe),
             utcnow(),
             horizon_days=args.horizon,
+            every=args.every,
             max_dates=args.dates,
         )
     except Exception as exc:
@@ -725,6 +724,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     signal_ic.add_argument("--horizon", type=int, default=5, help="forward-return horizon (days)")
     signal_ic.add_argument("--dates", type=int, default=120, help="max decision dates to sample")
+    signal_ic.add_argument(
+        "--every",
+        type=int,
+        default=5,
+        help="days between sampled dates (use >= horizon for an independent t-stat)",
+    )
     signal_ic.set_defaults(func=cmd_signal_ic)
 
     cycle = sub.add_parser("cycle", help="run one paper trading cycle")
