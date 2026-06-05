@@ -11,6 +11,7 @@ from market_trader.features.base import (
     candidate_features,
     cross_sectional_zscore,
     default_features,
+    stack_features,
 )
 from market_trader.features.flow import CongressLeadershipBuys, InsiderNetBuys
 from market_trader.features.regime import macro_regime
@@ -28,4 +29,5 @@ __all__ = [
     "cross_sectional_zscore",
     "default_features",
     "macro_regime",
+    "stack_features",
 ]

@@ -465,7 +465,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         print("simulate: Alpaca keys not set")
         return 1
 
-    from datetime import date, timedelta
+    from datetime import date, datetime, timedelta
 
     import pandas as pd
 
@@ -478,13 +478,14 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         EqualWeightStrategy,
         InsiderLongStrategy,
         LongShortInsiderStrategy,
+        StackedSignalStrategy,
         VolTargetedStrategy,
     )
     from market_trader.collectors import IngestionGateway, PriceCollector
     from market_trader.collectors.alpaca import AlpacaDataClient
-    from market_trader.collectors.edgar import FORM4_DATASET
     from market_trader.core.synthetic import PRICE_DATASET
     from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.features import cross_sectional_zscore, stack_features
     from market_trader.features.flow import InsiderNetBuys
     from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
@@ -514,9 +515,26 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         # the per-date compute is cheap), to A/B the price-only composite against the same
         # book tilted by the validated insider signal — net of costs.
         mem = InMemoryBitemporalStore()
-        mem.add_many(store.as_of(DISTANT_FUTURE, dataset=FORM4_DATASET))
+        mem.add_many(store.as_of(DISTANT_FUTURE))  # all datasets: insider + fundamentals + price
         insider = InsiderNetBuys(window_days=90)
         insider_scores = {t: insider.compute(mem, t, universe) for t in schedule}
+
+        # Combination layer: z-score each stacked signal and average into one mega-alpha
+        # per rebalance (price features off the panel; the rest off the in-memory store).
+        stack = stack_features()
+        stacked_scores: dict[datetime, pd.Series] = {}
+        for t in schedule:
+            price_slice = panel.loc[panel.index <= t]
+            zs = []
+            for f in stack:
+                from_panel = getattr(f, "_from_panel", None)
+                vals = (
+                    from_panel(price_slice, universe)
+                    if from_panel is not None
+                    else f.compute(mem, t, universe)
+                )
+                zs.append(cross_sectional_zscore(vals))
+            stacked_scores[t] = pd.concat(zs, axis=1).mean(axis=1)
 
         max_pos = settings.max_positions or 20
         base = CompositeBacktestStrategy(max_positions=max_pos)
@@ -537,6 +555,13 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             name="insider_long@vol",
         )
         il_result = run_backtest(store, insider_long, schedule, universe=universe)
+        # The combination layer: trade the multi-signal mega-alpha, vol-governed.
+        stacked = VolTargetedStrategy(
+            StackedSignalStrategy(stacked_scores, max_positions=max_pos),
+            target_vol=settings.target_vol,
+            name="stacked@vol",
+        )
+        st_result = run_backtest(store, stacked, schedule, universe=universe)
         summaries = {
             base.name: run_backtest(store, base, schedule, universe=universe).summary,
             governed.name: run_backtest(store, governed, schedule, universe=universe).summary,
@@ -544,12 +569,13 @@ def cmd_simulate(args: argparse.Namespace) -> int:
                 store, ls_governed, schedule, BorrowCostModel(), universe=universe
             ).summary,
             insider_long.name: il_result.summary,
+            stacked.name: st_result.summary,
             "equal_weight": run_backtest(
                 store, EqualWeightStrategy(), schedule, universe=universe
             ).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0], universe=universe),
         }
-        sim = monte_carlo_report(il_result.net_returns.to_numpy(dtype=float))  # insider-long
+        sim = monte_carlo_report(st_result.net_returns.to_numpy(dtype=float))  # the stacked book
     except Exception as exc:
         print(f"simulate failed: {exc}")
         return 1
@@ -563,15 +589,15 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             f"  {name:20} ann={s.ann_return:+.1%}  vol={s.ann_vol:.1%}  sharpe={s.sharpe:+.2f}  "
             f"max_dd={s.max_drawdown:.1%}  hit={s.hit_rate:.0%}"
         )
-    il_s = summaries["insider_long@vol"]
+    st_s = summaries["stacked@vol"]
     bnh_s = summaries["buy_and_hold"]
     print(
-        f"  insider_long@vol vs buy_and_hold: sharpe {il_s.sharpe:+.2f} vs {bnh_s.sharpe:+.2f}, "
-        f"max_dd {il_s.max_drawdown:.0%} vs {bnh_s.max_drawdown:.0%} "
+        f"  stacked@vol vs buy_and_hold: sharpe {st_s.sharpe:+.2f} vs {bnh_s.sharpe:+.2f}, "
+        f"max_dd {st_s.max_drawdown:.0%} vs {bnh_s.max_drawdown:.0%} "
         f"(governor cap 25%, target_vol {settings.target_vol:.0%})"
     )
     print(
-        f"  Monte-Carlo [insider_long@vol] ({sim.n_sims} paths): total return q05/q50/q95 = "
+        f"  Monte-Carlo [stacked@vol] ({sim.n_sims} paths): total return q05/q50/q95 = "
         f"{sim.total_return_q05:+.1%} / {sim.total_return_q50:+.1%} / {sim.total_return_q95:+.1%}"
     )
     print(

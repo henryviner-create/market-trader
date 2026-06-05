@@ -13,6 +13,7 @@ from market_trader.backtest.strategies import (
     EqualWeightStrategy,
     InsiderLongStrategy,
     LongShortInsiderStrategy,
+    StackedSignalStrategy,
     VolTargetedStrategy,
 )
 from market_trader.portfolio.construction import ledoit_wolf_cov
@@ -130,3 +131,17 @@ def test_insider_long_picks_top_net_buyers_equally() -> None:
 
     flat = pd.Series(dict.fromkeys(syms, 0.0))
     assert InsiderLongStrategy(insider_scores={t: flat}).target_weights(view, t) == {}  # no buyers
+
+
+def test_stacked_signal_longs_the_top_combined_scores() -> None:
+    dates = pd.bdate_range("2022-01-03", periods=30)
+    syms = [f"S{i}" for i in range(6)]
+    prices = pd.DataFrame({s: 100.0 for s in syms}, index=dates)  # prices only feed universe()
+    t = dates[-1].to_pydatetime()
+    view = PanelPriceView(prices, t)
+
+    scores = pd.Series({"S0": -1.0, "S1": 0.5, "S2": 2.0, "S3": 3.0, "S4": 1.0, "S5": -2.0})
+    w = StackedSignalStrategy({t: scores}, max_positions=2).target_weights(view, t)
+    assert set(w) == {"S2", "S3"}  # the two highest combined scores
+    assert all(abs(v - 0.5) < 1e-9 for v in w.values())  # equal weight
+    assert StackedSignalStrategy({}, max_positions=2).target_weights(view, t) == {}  # no scores
