@@ -8,8 +8,10 @@ import pandas as pd
 
 from market_trader.backtest import (
     BasicCostModel,
+    EqualWeightStrategy,
     MomentumStrategy,
     ZeroCostModel,
+    buy_and_hold_summary,
     run_backtest,
     summaries_to_frame,
 )
@@ -76,3 +78,16 @@ def test_panel_view_is_interchangeable_with_store_view() -> None:
     assert MomentumStrategy().target_weights(store_view, t) == MomentumStrategy().target_weights(
         panel_view, t
     )
+
+
+def test_run_backtest_restricts_to_the_given_universe() -> None:
+    # The store may hold more names than the run's universe (accumulated price history);
+    # passing `universe=` must restrict the book and the baselines to just those names.
+    store, schedule = _store_and_schedule()  # S0..S5 in the store
+    full = run_backtest(store, EqualWeightStrategy(), schedule)
+    two = run_backtest(store, EqualWeightStrategy(), schedule, universe=["S0", "S1"])
+    assert not full.net_returns.equals(two.net_returns)  # the filter changed the book
+
+    bnh_all = buy_and_hold_summary(store, start_after=schedule[0])
+    bnh_two = buy_and_hold_summary(store, start_after=schedule[0], universe=["S0", "S1"])
+    assert bnh_all.ann_return != bnh_two.ann_return  # buy-and-hold honours the universe too

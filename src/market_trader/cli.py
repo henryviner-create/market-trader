@@ -536,14 +536,18 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             target_vol=settings.target_vol,
             name="insider_long@vol",
         )
-        il_result = run_backtest(store, insider_long, schedule)
+        il_result = run_backtest(store, insider_long, schedule, universe=universe)
         summaries = {
-            base.name: run_backtest(store, base, schedule).summary,
-            governed.name: run_backtest(store, governed, schedule).summary,
-            ls_governed.name: run_backtest(store, ls_governed, schedule, BorrowCostModel()).summary,
+            base.name: run_backtest(store, base, schedule, universe=universe).summary,
+            governed.name: run_backtest(store, governed, schedule, universe=universe).summary,
+            ls_governed.name: run_backtest(
+                store, ls_governed, schedule, BorrowCostModel(), universe=universe
+            ).summary,
             insider_long.name: il_result.summary,
-            "equal_weight": run_backtest(store, EqualWeightStrategy(), schedule).summary,
-            "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
+            "equal_weight": run_backtest(
+                store, EqualWeightStrategy(), schedule, universe=universe
+            ).summary,
+            "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0], universe=universe),
         }
         sim = monte_carlo_report(il_result.net_returns.to_numpy(dtype=float))  # insider-long
     except Exception as exc:

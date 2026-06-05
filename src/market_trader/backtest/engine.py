@@ -56,6 +56,7 @@ def run_backtest(
     dataset: str = PRICE_DATASET,
     price_field: str = "close",
     periods_per_year: int = TRADING_DAYS,
+    universe: Sequence[str] | None = None,
 ) -> BacktestResult:
     if not schedule:
         raise ValueError("schedule must be non-empty")
@@ -68,6 +69,9 @@ def run_backtest(
     # multi-year backtest crawled. Prices have knowledge_time == event_time, so a
     # panel sliced at event_time <= t is exactly what was knowable at t.
     panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=dataset), price_field)
+    if universe is not None:  # restrict to the run's universe (the store may hold more names)
+        names = set(universe)
+        panel = panel[[c for c in panel.columns if str(c) in names]]
     if panel.empty:
         raise ValueError("no price data in store")
     returns = panel.pct_change()
@@ -119,9 +123,13 @@ def buy_and_hold_summary(
     price_field: str = "close",
     periods_per_year: int = TRADING_DAYS,
     start_after: datetime | None = None,
+    universe: Sequence[str] | None = None,
 ) -> PerformanceSummary:
     """Equal-initial-weight buy-and-hold of the whole universe (no rebalancing)."""
     returns = _realized_returns(store, dataset, price_field)
+    if universe is not None:
+        names = set(universe)
+        returns = returns[[c for c in returns.columns if str(c) in names]]
     if returns.empty:
         raise ValueError("no price data in store")
     if start_after is not None:
