@@ -324,7 +324,14 @@ def run_dry_paper_cycle(settings: Settings, *, n_syms: int = 8, n_days: int = 12
     }
     broker = PaperBroker(prices, starting_cash=100_000.0)
     return run_paper_cycle(
-        store, as_of=as_of, symbols=symbols, prices=prices, broker=broker, settings=settings
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=settings,
+        risk_weighting=settings.risk_weighting,  # honour the configured book (e.g. size_book)
+        tilt_strength=settings.tilt_strength,
     )
 
 
