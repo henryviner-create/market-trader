@@ -107,6 +107,44 @@ def _stop_losses(positions: list, prices: dict[str, float], stop_loss_pct: float
     return out
 
 
+def _trailing_stops(
+    store: BitemporalStore,
+    as_of: datetime,
+    positions: list,
+    prices: dict[str, float],
+    trail_pct: float,
+    *,
+    window: int = 60,
+) -> set[str]:
+    """Held names that have fallen more than ``trail_pct`` below their trailing high.
+
+    A *breakdown* stop, complementing the entry-based hard stop: a name that has given back
+    its recent gains and rolled over from its ``window``-day high is cut, even if still above
+    entry — the book reacts to a position deteriorating instead of holding it blindly. The
+    high is read from the point-in-time price panel, so there is no per-position state to
+    persist. 0 disables it.
+    """
+    if trail_pct <= 0:
+        return set()
+    from market_trader.backtest.pit import observations_to_price_frame
+
+    panel = observations_to_price_frame(store.as_of(as_of, dataset=PRICE_DATASET))
+    if panel.empty:
+        return set()
+    out: set[str] = set()
+    for p in positions:
+        px = prices.get(p.symbol)
+        if p.qty <= 0 or not px or p.symbol not in panel.columns:
+            continue
+        recent = panel[p.symbol].tail(window).dropna()
+        if recent.empty:
+            continue
+        peak = float(recent.max())
+        if peak > 0 and (px / peak - 1.0) <= -trail_pct:
+            out.add(p.symbol)
+    return out
+
+
 def _risk_weights(
     selected: list[str], matrix: pd.DataFrame, mode: str, scores: pd.Series | None = None
 ) -> dict[str, float]:
@@ -197,6 +235,7 @@ def run_paper_cycle(
     model_version: str = "composite",
     prediction_horizon: int = 5,
     stop_loss_pct: float = 0.0,
+    trailing_stop_pct: float = 0.0,
     reserved_symbols: frozenset[str] = frozenset(),
     cancel_stale_orders: bool = False,
 ) -> CycleResult:
@@ -238,7 +277,11 @@ def run_paper_cycle(
     # daily book neither selects nor flattens them, so the two never fight.
     positions = [p for p in broker.get_positions() if p.symbol not in reserved_symbols]
     held = {p.symbol for p in positions}
-    stopped = _stop_losses(positions, prices, stop_loss_pct)  # cut losers past the hard floor
+    # Exit discipline: cut a name past its hard floor from entry OR broken down from its
+    # trailing high — the book reacts to deterioration rather than holding regardless.
+    stopped = _stop_losses(positions, prices, stop_loss_pct) | _trailing_stops(
+        store, as_of, positions, prices, trailing_stop_pct
+    )
     if stopped:
         _log.info("stop_loss", names=sorted(stopped))
     target: dict[str, float] = {}
@@ -460,6 +503,7 @@ def run_live_paper_cycle(
         prediction_log=True,
         model_version=settings.scorer,
         stop_loss_pct=settings.stop_loss_pct,
+        trailing_stop_pct=settings.trailing_stop_pct,
         reserved_symbols=reserved,
         cancel_stale_orders=True,  # clear a prior run's unfilled orders first
     )
