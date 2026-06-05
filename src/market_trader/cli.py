@@ -478,6 +478,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         EqualWeightStrategy,
         InsiderLongStrategy,
         LongShortInsiderStrategy,
+        ScoreTiltStrategy,
         StackedSignalStrategy,
         VolTargetedStrategy,
     )
@@ -566,6 +567,18 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             stacked_raw, target_vol=settings.target_vol, name="stacked@vol"
         )
         st_result = run_backtest(store, stacked, schedule, universe=universe)
+        # Breadth-preserving alternative to top-N selection: hold the *whole* universe but
+        # tilt weights by the same mega-alpha (w ~ exp(k*z_score)). This keeps the
+        # sqrt(breadth) that makes naive 1/N so hard to beat, while still expressing the
+        # signal -- the standard active-weight ("enhanced index") way to run an alpha book.
+        tilt = ScoreTiltStrategy(stacked_scores, tilt_strength=1.0)
+        tilt_governed = VolTargetedStrategy(tilt, target_vol=settings.target_vol, name="tilt@vol")
+        # The true mandate benchmark: equal-weight *with* the drawdown governor, so the
+        # comparison is like-for-like (raw equal-weight breaches the 25% DD cap, so beating
+        # it on Sharpe alone is not a fair win under a hard-DD objective).
+        eqw_governed = VolTargetedStrategy(
+            EqualWeightStrategy(), target_vol=settings.target_vol, name="equal_weight@vol"
+        )
         summaries = {
             base.name: run_backtest(store, base, schedule, universe=universe).summary,
             governed.name: run_backtest(store, governed, schedule, universe=universe).summary,
@@ -575,8 +588,15 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             insider_long.name: il_result.summary,
             stacked_raw.name: run_backtest(store, stacked_raw, schedule, universe=universe).summary,
             stacked.name: st_result.summary,
+            tilt.name: run_backtest(store, tilt, schedule, universe=universe).summary,
+            tilt_governed.name: run_backtest(
+                store, tilt_governed, schedule, universe=universe
+            ).summary,
             "equal_weight": run_backtest(
                 store, EqualWeightStrategy(), schedule, universe=universe
+            ).summary,
+            eqw_governed.name: run_backtest(
+                store, eqw_governed, schedule, universe=universe
             ).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0], universe=universe),
         }

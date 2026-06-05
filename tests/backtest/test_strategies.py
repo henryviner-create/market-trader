@@ -13,6 +13,7 @@ from market_trader.backtest.strategies import (
     EqualWeightStrategy,
     InsiderLongStrategy,
     LongShortInsiderStrategy,
+    ScoreTiltStrategy,
     StackedSignalStrategy,
     VolTargetedStrategy,
 )
@@ -145,3 +146,37 @@ def test_stacked_signal_longs_the_top_combined_scores() -> None:
     assert set(w) == {"S2", "S3"}  # the two highest combined scores
     assert all(abs(v - 0.5) < 1e-9 for v in w.values())  # equal weight
     assert StackedSignalStrategy({}, max_positions=2).target_weights(view, t) == {}  # no scores
+
+
+def _tilt_view() -> tuple[PanelPriceView, list[str], datetime]:
+    dates = pd.bdate_range("2022-01-03", periods=30)
+    syms = [f"S{i}" for i in range(6)]
+    prices = pd.DataFrame({s: 100.0 for s in syms}, index=dates)  # prices only feed universe()
+    t = dates[-1].to_pydatetime()
+    return PanelPriceView(prices, t), syms, t
+
+
+def test_score_tilt_holds_everything_and_overweights_high_scores() -> None:
+    view, syms, t = _tilt_view()
+    scores = pd.Series({"S0": -2.0, "S1": -1.0, "S2": 0.0, "S3": 1.0, "S4": 2.0, "S5": 3.0})
+    w = ScoreTiltStrategy({t: scores}, tilt_strength=1.0).target_weights(view, t)
+
+    assert set(w) == set(syms)  # breadth preserved: every name held, none selected away
+    assert abs(sum(w.values()) - 1.0) < 1e-9  # fully invested, long-only
+    assert all(v > 0 for v in w.values())  # exp tilt is always positive -> no clip needed
+    ordered = [w[s] for s in syms]  # syms are in ascending score order
+    assert ordered == sorted(ordered)  # weight rises monotonically with the score
+    assert w["S5"] > w["S0"]  # the top name outweighs the bottom
+
+
+def test_score_tilt_zero_strength_is_exactly_equal_weight() -> None:
+    view, syms, t = _tilt_view()
+    scores = pd.Series({s: float(i) for i, s in enumerate(syms)})  # a real spread
+    w = ScoreTiltStrategy({t: scores}, tilt_strength=0.0).target_weights(view, t)
+    assert all(abs(v - 1.0 / len(syms)) < 1e-9 for v in w.values())  # k=0 collapses to 1/N
+
+
+def test_score_tilt_without_scores_falls_back_to_equal_weight() -> None:
+    view, syms, t = _tilt_view()
+    w = ScoreTiltStrategy({}).target_weights(view, t)  # no scores for this rebalance
+    assert all(abs(v - 1.0 / len(syms)) < 1e-9 for v in w.values())
