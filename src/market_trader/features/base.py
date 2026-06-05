@@ -74,10 +74,12 @@ def candidate_features() -> list[Feature]:
 
     A candidate must show a positive, significant out-of-sample IC here before it is
     promoted into ``default_features`` (the live scorer) — the "earn its place" gate.
-    Current candidates: the opportunistic-insider refinement (Cohen-Malloy-Pomorski), the
-    academically robust 12-1 momentum (252-day, skip 21), and a low-volatility factor.
+    Current candidates: the opportunistic-insider refinement (Cohen-Malloy-Pomorski),
+    the robust 12-1 momentum (252-day, skip 21), a low-volatility factor, and the two
+    fundamentals signals (value = earnings yield, PEAD = earnings surprise).
     """
     from market_trader.features.flow import InsiderNetBuys
+    from market_trader.features.fundamental import EarningsSurprise, EarningsYield
     from market_trader.features.technical import Momentum, Volatility
 
     return [
@@ -85,4 +87,6 @@ def candidate_features() -> list[Feature]:
         InsiderNetBuys(window_days=90, opportunistic_only=True),
         Momentum(lookback=252, skip=21),
         Volatility(window=120, low_vol=True),
+        EarningsYield(),
+        EarningsSurprise(),
     ]

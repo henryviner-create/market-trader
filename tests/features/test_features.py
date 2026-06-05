@@ -11,6 +11,7 @@ from market_trader.collectors import (
     IngestionGateway,
     PriceCollector,
 )
+from market_trader.collectors.fundamentals import FundamentalsCollector
 from market_trader.core.synthetic import business_days
 from market_trader.core.time import day_close
 from market_trader.features import (
@@ -23,7 +24,16 @@ from market_trader.features import (
     default_features,
     macro_regime,
 )
+from market_trader.features.fundamental import EarningsSurprise, EarningsYield
 from market_trader.storage import InMemoryBitemporalStore
+
+
+def _ingest_eps(store: InMemoryBitemporalStore, ticker: str, quarters: list) -> None:
+    """quarters: list of (period_end_iso, filed_iso, eps)."""
+    recs = [
+        {"ticker": ticker, "period_end": pe, "filed_date": fd, "eps": e} for pe, fd, e in quarters
+    ]
+    IngestionGateway(store).ingest(FundamentalsCollector().normalize(recs))
 
 
 def _ingest_prices(
@@ -224,4 +234,50 @@ def test_low_volatility_factor_is_negative_volatility() -> None:
 def test_candidate_features_extends_default_with_gated_signals() -> None:
     names = {f.name for f in candidate_features()}
     assert {f.name for f in default_features()} <= names  # candidates are a superset
-    assert {"insider_net_buys_90d_opp", "mom_252_skip21", "lowvol_120"} <= names
+    assert {
+        "insider_net_buys_90d_opp",
+        "mom_252_skip21",
+        "lowvol_120",
+        "earnings_yield",
+        "earnings_surprise",
+    } <= names
+
+
+def test_earnings_yield_is_ttm_eps_over_price() -> None:
+    store = InMemoryBitemporalStore()
+    _ingest_prices(store, "AAA", [100.0] * 5)  # latest price = 100
+    _ingest_eps(
+        store,
+        "AAA",
+        [
+            ("2023-03-31", "2023-04-15", 1.0),
+            ("2023-06-30", "2023-07-15", 1.0),
+            ("2023-09-30", "2023-10-15", 1.0),
+            ("2023-12-31", "2024-01-15", 1.0),  # TTM EPS = 4.0
+        ],
+    )
+    y = EarningsYield().compute(store, day_close(date(2024, 6, 1)), ["AAA", "BBB"])
+    assert abs(y["AAA"] - 0.04) < 1e-9  # 4.0 / 100
+    assert y.isna()["BBB"]  # no fundamentals -> NaN (no opinion), not a misleading 0
+
+
+def test_earnings_surprise_standardizes_the_latest_quarter() -> None:
+    store = InMemoryBitemporalStore()
+    quarters = [
+        ("2022-03-31", "2022-04-15", 1.0),
+        ("2022-06-30", "2022-07-15", 1.0),
+        ("2022-09-30", "2022-10-15", 1.0),
+        ("2022-12-31", "2023-01-15", 1.0),
+        ("2023-03-31", "2023-04-15", 1.0),
+        ("2023-06-30", "2023-07-15", 1.0),
+        ("2023-09-30", "2023-10-15", 1.1),  # small prior surprises -> low std
+        ("2023-12-31", "2024-01-15", 2.0),  # big jump vs a year earlier -> high SUE
+    ]
+    _ingest_eps(store, "AAA", quarters)
+
+    sue = EarningsSurprise().compute(store, day_close(date(2024, 2, 1)), ["AAA"])
+    assert sue["AAA"] > 3.0  # a large standardized surprise inside the drift window
+
+    # well after the last filing -> outside the drift window -> no active signal
+    stale = EarningsSurprise().compute(store, day_close(date(2024, 12, 1)), ["AAA"])
+    assert stale.isna()["AAA"]
