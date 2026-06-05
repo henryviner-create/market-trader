@@ -803,6 +803,54 @@ def cmd_ingest_fundamentals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_llm_signals(args: argparse.Namespace) -> int:
+    """The breadth factory: extract Opus news-sentiment signals for the universe.
+
+    Reads recent news already in the store, asks the (budgeted) hosted model for a
+    structured, point-in-time score per name, and ingests them into the ``llm.signal``
+    dataset for the LLMNewsSentiment candidate. Run *after* a news fetch; budget-bounded so
+    it can never run away on cost, and resumable (it stops cleanly when the budget is spent).
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+    if not settings.anthropic_api_key:
+        print("ingest-llm-signals: MT_ANTHROPIC_API_KEY not set")
+        return 1
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.llm_features import (
+        LLMSignalCollector,
+        extract_signals_for_universe,
+    )
+    from market_trader.core.time import utcnow
+    from market_trader.reasoning import anthropic_provider_from_settings
+    from market_trader.reasoning.budget import BudgetedProvider
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] or list(
+        resolve_universe(settings.universe)
+    )
+    budget = args.budget if args.budget > 0 else settings.llm_daily_call_budget
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        provider = BudgetedProvider(anthropic_provider_from_settings(settings), budget=budget)
+        extracted = extract_signals_for_universe(
+            store, provider, symbols, utcnow(), window_days=args.window
+        )
+        if extracted:
+            IngestionGateway(store).ingest(LLMSignalCollector().normalize(extracted))
+    except Exception as exc:
+        print(f"ingest-llm-signals failed: {exc}")
+        return 1
+    print(
+        f"ingest-llm-signals: {len(extracted)} signals extracted from news "
+        f"(LLM calls used: {provider.calls}/{budget})"
+    )
+    return 0
+
+
 def cmd_build_universe(args: argparse.Namespace) -> int:
     """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
 
@@ -1055,6 +1103,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--refresh", action="store_true", help="re-fetch already-covered symbols"
     )
     ingest_fund.set_defaults(func=cmd_ingest_fundamentals)
+
+    ingest_llm = sub.add_parser(
+        "ingest-llm-signals",
+        help="breadth factory: extract Opus news-sentiment signals for the universe",
+    )
+    ingest_llm.add_argument("--window", type=int, default=7, help="news lookback window in days")
+    ingest_llm.add_argument(
+        "--budget", type=int, default=0, help="max LLM calls (0 = use llm_daily_call_budget)"
+    )
+    ingest_llm.add_argument(
+        "--symbols", default="", help="comma-separated tickers instead of the universe"
+    )
+    ingest_llm.set_defaults(func=cmd_ingest_llm_signals)
 
     build_universe = sub.add_parser(
         "build-universe",
