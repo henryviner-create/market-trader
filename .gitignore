@@ -38,3 +38,4 @@ notebooks/**/output/
 .DS_Store
 .idea/
 .vscode/
+.claude/worktrees/
