@@ -641,6 +641,59 @@ def cmd_ingest_filings(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_fundamentals(args: argparse.Namespace) -> int:
+    """Backfill SEC XBRL quarterly fundamentals (EPS) for the universe into the store.
+
+    Resumable like ``ingest-filings``: already-covered symbols are skipped unless
+    ``--refresh``. One companyfacts request per company, so a universe backfills fast.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.fundamentals import (
+        FUNDAMENTAL_DATASET,
+        FundamentalsClient,
+        FundamentalsCollector,
+    )
+    from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        universe = (
+            [s.strip() for s in args.symbols.split(",") if s.strip()]
+            if args.symbols
+            else list(resolve_universe(settings.universe))
+        )
+        if args.refresh:
+            todo = list(universe)
+        else:
+            covered = {
+                o.entity_id.upper()
+                for o in store.as_of(DISTANT_FUTURE, dataset=FUNDAMENTAL_DATASET)
+            }
+            todo = _symbols_to_fetch(universe, covered)
+        skipped = len(universe) - len(todo)
+        client = FundamentalsClient(
+            user_agent=settings.sec_user_agent, budget_seconds=float(args.budget)
+        )
+        records = client.fetch_for_symbols(todo)
+        observations = FundamentalsCollector().normalize(records)
+        IngestionGateway(store).ingest(observations)
+    except Exception as exc:
+        print(f"ingest-fundamentals failed: {exc}")
+        return 1
+    print(
+        f"ingest-fundamentals: {len(records)} quarterly records "
+        f"-> {len(observations)} observations ingested "
+        f"({len(todo)} fetched, {skipped} already-covered skipped)"
+    )
+    return 0
+
+
 def cmd_build_universe(args: argparse.Namespace) -> int:
     """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
 
@@ -875,6 +928,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="re-fetch already-covered symbols (default: skip them so re-runs resume coverage)",
     )
     ingest_filings.set_defaults(func=cmd_ingest_filings)
+
+    ingest_fund = sub.add_parser(
+        "ingest-fundamentals",
+        help="backfill SEC XBRL quarterly EPS (value + PEAD) for the universe",
+    )
+    ingest_fund.add_argument(
+        "--budget", type=float, default=300.0, help="wall-clock fetch budget (seconds)"
+    )
+    ingest_fund.add_argument(
+        "--symbols", default="", help="comma-separated tickers to fetch instead of the universe"
+    )
+    ingest_fund.add_argument(
+        "--refresh", action="store_true", help="re-fetch already-covered symbols"
+    )
+    ingest_fund.set_defaults(func=cmd_ingest_fundamentals)
 
     build_universe = sub.add_parser(
         "build-universe",
