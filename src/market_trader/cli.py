@@ -479,6 +479,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         InsiderLongStrategy,
         LongShortInsiderStrategy,
         ScoreTiltStrategy,
+        SizedBookStrategy,
         StackedSignalStrategy,
         VolTargetedStrategy,
     )
@@ -488,6 +489,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     from market_trader.core.time import DISTANT_FUTURE
     from market_trader.features import cross_sectional_zscore, stack_features
     from market_trader.features.flow import InsiderNetBuys
+    from market_trader.portfolio import RiskLimits
     from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
     from market_trader.universe.liquid import resolve_universe
@@ -579,6 +581,25 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         eqw_governed = VolTargetedStrategy(
             EqualWeightStrategy(), target_vol=settings.target_vol, name="equal_weight@vol"
         )
+        # The unified live/backtest sizer (portfolio.sizing.size_book), exercised here so the
+        # backtest validates the exact production path: sized_eqw@vol (no tilt) must reproduce
+        # equal_weight@vol -- it is the governed-1/N book we deploy; sized_tilt@vol must
+        # reproduce tilt@vol. Same hard caps the live cycle applies.
+        sim_limits = RiskLimits(
+            max_position_weight=settings.max_position_weight,
+            max_gross_exposure=settings.max_gross_exposure,
+            max_net_exposure=settings.max_net_exposure,
+        )
+        sized_eqw = SizedBookStrategy(
+            target_vol=settings.target_vol, limits=sim_limits, name="sized_eqw@vol"
+        )
+        sized_tilt = SizedBookStrategy(
+            target_vol=settings.target_vol,
+            limits=sim_limits,
+            scores=stacked_scores,
+            tilt_strength=1.0,
+            name="sized_tilt@vol",
+        )
         summaries = {
             base.name: run_backtest(store, base, schedule, universe=universe).summary,
             governed.name: run_backtest(store, governed, schedule, universe=universe).summary,
@@ -598,6 +619,8 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             eqw_governed.name: run_backtest(
                 store, eqw_governed, schedule, universe=universe
             ).summary,
+            sized_eqw.name: run_backtest(store, sized_eqw, schedule, universe=universe).summary,
+            sized_tilt.name: run_backtest(store, sized_tilt, schedule, universe=universe).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0], universe=universe),
         }
         sim = monte_carlo_report(st_result.net_returns.to_numpy(dtype=float))  # the stacked book
