@@ -145,6 +145,28 @@ def _trailing_stops(
     return out
 
 
+def _thesis_break_exits(
+    store: BitemporalStore, as_of: datetime, positions: list, threshold: float
+) -> set[str]:
+    """Held names whose Opus news-sentiment has turned strongly negative — a thesis-break exit.
+
+    Reads the point-in-time ``llm_news_sentiment`` (the nightly Opus factory's output, already
+    confidence-weighted), so NO LLM call happens in the cycle. A name we *hold* whose sentiment
+    drops to ``<= -threshold`` is flagged for exit — the book reacts to material bad news on a
+    position rather than holding through it. Defensive (exit-only, never an entry trigger), so
+    even an unproven signal is acting only as risk control. 0 disables it.
+    """
+    if threshold <= 0 or not positions:
+        return set()
+    from market_trader.features.llm import LLMNewsSentiment
+
+    held = [p.symbol for p in positions if p.qty > 0]
+    if not held:
+        return set()
+    sentiment = LLMNewsSentiment().compute(store, as_of, held)
+    return {s for s in held if float(sentiment.get(s, 0.0)) <= -threshold}
+
+
 def _risk_weights(
     selected: list[str], matrix: pd.DataFrame, mode: str, scores: pd.Series | None = None
 ) -> dict[str, float]:
@@ -236,6 +258,7 @@ def run_paper_cycle(
     prediction_horizon: int = 5,
     stop_loss_pct: float = 0.0,
     trailing_stop_pct: float = 0.0,
+    thesis_exit_threshold: float = 0.0,
     reserved_symbols: frozenset[str] = frozenset(),
     cancel_stale_orders: bool = False,
 ) -> CycleResult:
@@ -277,13 +300,16 @@ def run_paper_cycle(
     # daily book neither selects nor flattens them, so the two never fight.
     positions = [p for p in broker.get_positions() if p.symbol not in reserved_symbols]
     held = {p.symbol for p in positions}
-    # Exit discipline: cut a name past its hard floor from entry OR broken down from its
-    # trailing high — the book reacts to deterioration rather than holding regardless.
-    stopped = _stop_losses(positions, prices, stop_loss_pct) | _trailing_stops(
-        store, as_of, positions, prices, trailing_stop_pct
+    # Exit discipline: cut a name past its hard floor from entry, broken down from its
+    # trailing high, OR with materially bad news on it (Opus thesis-break) — the book reacts
+    # to deterioration rather than holding regardless.
+    stopped = (
+        _stop_losses(positions, prices, stop_loss_pct)
+        | _trailing_stops(store, as_of, positions, prices, trailing_stop_pct)
+        | _thesis_break_exits(store, as_of, positions, thesis_exit_threshold)
     )
     if stopped:
-        _log.info("stop_loss", names=sorted(stopped))
+        _log.info("exit_discipline", names=sorted(stopped))
     target: dict[str, float] = {}
     if not ranked.empty and risk_weighting == "size_book":
         # The unified chassis (size_book): hold the *whole* scored universe, vol-governed to
@@ -504,6 +530,7 @@ def run_live_paper_cycle(
         model_version=settings.scorer,
         stop_loss_pct=settings.stop_loss_pct,
         trailing_stop_pct=settings.trailing_stop_pct,
+        thesis_exit_threshold=settings.thesis_exit_threshold,
         reserved_symbols=reserved,
         cancel_stale_orders=True,  # clear a prior run's unfilled orders first
     )
