@@ -11,6 +11,7 @@ from market_trader.backtest.pit import PanelPriceView
 from market_trader.backtest.strategies import (
     CompositeBacktestStrategy,
     EqualWeightStrategy,
+    InsiderLongStrategy,
     LongShortInsiderStrategy,
     VolTargetedStrategy,
 )
@@ -113,3 +114,19 @@ def test_long_short_insider_is_dollar_neutral_and_trades_the_extremes() -> None:
     assert w["S5"] > 0 and w["S4"] > 0  # strongest net buyers -> long
     assert w["S0"] < 0 and w["S1"] < 0  # strongest net sellers -> short
     assert "S2" not in w and "S3" not in w  # no activity -> not traded
+
+
+def test_insider_long_picks_top_net_buyers_equally() -> None:
+    dates = pd.bdate_range("2022-01-03", periods=30)
+    syms = [f"S{i}" for i in range(6)]
+    prices = pd.DataFrame({s: 100.0 for s in syms}, index=dates)  # prices only feed universe()
+    t = dates[-1].to_pydatetime()
+    view = PanelPriceView(prices, t)
+
+    scores = pd.Series({"S0": -2.0, "S1": 0.0, "S2": 1.0, "S3": 3.0, "S4": 2.0, "S5": -1.0})
+    w = InsiderLongStrategy(insider_scores={t: scores}, max_positions=2).target_weights(view, t)
+    assert set(w) == {"S3", "S4"}  # only the top two net buyers
+    assert all(abs(v - 0.5) < 1e-9 for v in w.values())  # equal weight
+
+    flat = pd.Series(dict.fromkeys(syms, 0.0))
+    assert InsiderLongStrategy(insider_scores={t: flat}).target_weights(view, t) == {}  # no buyers

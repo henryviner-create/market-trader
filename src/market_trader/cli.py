@@ -476,6 +476,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
     from market_trader.backtest.strategies import (
         CompositeBacktestStrategy,
         EqualWeightStrategy,
+        InsiderLongStrategy,
         LongShortInsiderStrategy,
         VolTargetedStrategy,
     )
@@ -503,7 +504,9 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         )
         IngestionGateway(store).ingest(PriceCollector().normalize(records))
         panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=PRICE_DATASET))
-        schedule = [ts.to_pydatetime() for ts in pd.DatetimeIndex(panel.index)][60::5]
+        schedule = [ts.to_pydatetime() for ts in pd.DatetimeIndex(panel.index)][
+            60 :: args.rebalance
+        ]
         if len(schedule) < 5:
             print("simulate: not enough price history (try a larger --days)")
             return 1
@@ -526,46 +529,45 @@ def cmd_simulate(args: argparse.Namespace) -> int:
         ls_governed = VolTargetedStrategy(
             long_short, target_vol=settings.target_vol, max_gross=2.0, name="ls_insider@vol"
         )
-        ls_result = run_backtest(store, ls_governed, schedule, BorrowCostModel())
+        # The insider signal at its own (~60d) horizon, undiluted: long the top net-buyers,
+        # vol-governed. Run at a slow rebalance (--rebalance) so the slow signal isn't churned.
+        insider_long = VolTargetedStrategy(
+            InsiderLongStrategy(insider_scores=insider_scores, max_positions=max_pos),
+            target_vol=settings.target_vol,
+            name="insider_long@vol",
+        )
+        il_result = run_backtest(store, insider_long, schedule)
         summaries = {
             base.name: run_backtest(store, base, schedule).summary,
-            tilted.name: run_backtest(store, tilted, schedule).summary,
             governed.name: run_backtest(store, governed, schedule).summary,
-            ls_governed.name: ls_result.summary,
+            ls_governed.name: run_backtest(store, ls_governed, schedule, BorrowCostModel()).summary,
+            insider_long.name: il_result.summary,
             "equal_weight": run_backtest(store, EqualWeightStrategy(), schedule).summary,
             "buy_and_hold": buy_and_hold_summary(store, start_after=schedule[0]),
         }
-        sim = monte_carlo_report(ls_result.net_returns.to_numpy(dtype=float))  # the L/S candidate
+        sim = monte_carlo_report(il_result.net_returns.to_numpy(dtype=float))  # insider-long
     except Exception as exc:
         print(f"simulate failed: {exc}")
         return 1
 
-    print(f"simulate [{len(schedule)} rebalances over ~{args.days}d, net of costs]")
+    print(
+        f"simulate [{len(schedule)} rebalances every {args.rebalance}d over ~{args.days}d, "
+        f"net of costs]"
+    )
     for name, s in summaries.items():
         print(
             f"  {name:20} ann={s.ann_return:+.1%}  vol={s.ann_vol:.1%}  sharpe={s.sharpe:+.2f}  "
             f"max_dd={s.max_drawdown:.1%}  hit={s.hit_rate:.0%}"
         )
-    base_s = summaries["composite"]
-    tilt_s = summaries["composite+insider"]
-    gov_s = summaries["+insider@vol"]
-    print(
-        f"  insider effect: sharpe {tilt_s.sharpe - base_s.sharpe:+.2f}, "
-        f"ann_return {tilt_s.ann_return - base_s.ann_return:+.1%} (no DD cost)"
-    )
-    print(
-        f"  risk governor: vol {tilt_s.ann_vol:.0%}->{gov_s.ann_vol:.0%} (target "
-        f"{settings.target_vol:.0%}), max_dd {tilt_s.max_drawdown:.0%}->{gov_s.max_drawdown:.0%} "
-        f"(cap 25%)"
-    )
-    ls_s = summaries["ls_insider@vol"]
+    il_s = summaries["insider_long@vol"]
     bnh_s = summaries["buy_and_hold"]
     print(
-        f"  long/short: sharpe {ls_s.sharpe:+.2f} (vs +insider@vol {gov_s.sharpe:+.2f}, "
-        f"buy_and_hold {bnh_s.sharpe:+.2f}), max_dd {ls_s.max_drawdown:.0%}, net of borrow"
+        f"  insider_long@vol vs buy_and_hold: sharpe {il_s.sharpe:+.2f} vs {bnh_s.sharpe:+.2f}, "
+        f"max_dd {il_s.max_drawdown:.0%} vs {bnh_s.max_drawdown:.0%} "
+        f"(governor cap 25%, target_vol {settings.target_vol:.0%})"
     )
     print(
-        f"  Monte-Carlo [ls_insider@vol] ({sim.n_sims} paths): total return q05/q50/q95 = "
+        f"  Monte-Carlo [insider_long@vol] ({sim.n_sims} paths): total return q05/q50/q95 = "
         f"{sim.total_return_q05:+.1%} / {sim.total_return_q50:+.1%} / {sim.total_return_q95:+.1%}"
     )
     print(
@@ -852,6 +854,9 @@ def build_parser() -> argparse.ArgumentParser:
         "simulate", help="backtest the strategy over history vs baselines + Monte-Carlo downside"
     )
     simulate.add_argument("--days", type=int, default=500, help="history window in days")
+    simulate.add_argument(
+        "--rebalance", type=int, default=5, help="trading days between rebalances (~21 = monthly)"
+    )
     simulate.set_defaults(func=cmd_simulate)
 
     ingest_filings = sub.add_parser(
