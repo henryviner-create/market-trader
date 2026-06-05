@@ -213,3 +213,32 @@ class InsiderLongStrategy:
         top = buyers.sort_values(ascending=False).head(self.max_positions)
         w = 1.0 / len(top)
         return {str(s): w for s in top.index}
+
+
+@dataclass
+class StackedSignalStrategy:
+    """Long-only book ranked by a precomputed *combined* multi-signal score.
+
+    The combination layer: many positive, low-correlation signals are z-scored and
+    averaged into one 'mega-alpha' (``scores``: a point-in-time ``{rebalance -> (symbol ->
+    combined score)}`` map), and the top names are held long-only. This is the Fundamental
+    Law's stack-uncorrelated-edges path to a higher information ratio; wrap in
+    :class:`VolTargetedStrategy` for the drawdown governor.
+    """
+
+    scores: dict[datetime, pd.Series]
+    max_positions: int = 30
+    name: str = "stacked"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        score = self.scores.get(as_of)
+        if score is None:
+            return {}
+        tradable = set(view.universe())
+        ranked = score.dropna()
+        ranked = ranked[ranked.index.isin(tradable)]
+        if ranked.empty:
+            return {}
+        top = ranked.sort_values(ascending=False).head(self.max_positions)
+        w = 1.0 / len(top)
+        return {str(s): w for s in top.index}

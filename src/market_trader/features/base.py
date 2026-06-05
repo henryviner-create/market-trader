@@ -91,3 +91,24 @@ def candidate_features() -> list[Feature]:
         EarningsYield(),
         EarningsSurprise(),
     ]
+
+
+def stack_features() -> list[Feature]:
+    """The signals to combine into one multi-signal score (the 'mega-alpha').
+
+    Each earned a positive IC on the small/mid-cap universe (where these premia live);
+    they span different families — insider flow, earnings surprise, value, momentum,
+    low-vol — so they are roughly uncorrelated, which is what makes stacking them raise
+    the information ratio (Fundamental Law: IR = IC x sqrt(breadth)).
+    """
+    from market_trader.features.flow import InsiderNetBuys
+    from market_trader.features.fundamental import EarningsSurprise, EarningsYield
+    from market_trader.features.technical import Momentum, Volatility
+
+    return [
+        InsiderNetBuys(window_days=90, opportunistic_only=True),
+        EarningsSurprise(),
+        EarningsYield(),
+        Momentum(lookback=252, skip=21),
+        Volatility(window=120, low_vol=True),
+    ]
