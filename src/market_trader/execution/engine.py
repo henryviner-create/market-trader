@@ -105,13 +105,19 @@ class ExecutionEngine:
                 continue
             target_qty = weight * deployable / price
             delta = target_qty - positions.get(symbol, 0.0)
-            if abs(delta) * price < 1.0:  # skip dust
+            qty = abs(delta)
+            if not self.settings.fractional_shares:
+                # Whole shares: many small-caps aren't fractionable on the broker, and a
+                # fractional order on one 403s and aborts the rebalance. Floor toward zero so
+                # a buy never overshoots buying power; the sub-share remainder is immaterial.
+                qty = float(int(qty))
+            if qty * price < 1.0:  # skip dust (and sub-one-share deltas in whole-share mode)
                 continue
             order = Order(
                 client_order_id=f"{as_of.strftime('%Y%m%dT%H%M%S')}-{symbol}",
                 symbol=symbol,
                 side=OrderSide.BUY if delta > 0 else OrderSide.SELL,
-                qty=abs(delta),
+                qty=qty,
             )
             planned.append((order, price))
         planned.sort(key=lambda op: op[0].side != OrderSide.SELL)  # SELLs first

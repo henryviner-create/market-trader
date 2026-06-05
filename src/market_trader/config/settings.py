@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     max_daily_loss: float = 0.0
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
+    # Order in whole shares (default) rather than fractional. Many small/mid-cap names are
+    # NOT fractionable on the broker, and a fractional order on one is rejected (HTTP 403
+    # "not fractionable"), which aborts the whole rebalance. Whole-share rounding sidesteps
+    # that; the sub-share remainder is immaterial on a diversified book. Set
+    # MT_FRACTIONAL_SHARES=true only on a universe you know is fully fractionable.
+    fractional_shares: bool = False
     # Risk-based sizing (the drawdown governor; see portfolio/sizing.py). The DD cap is
     # translated into a portfolio volatility target (halved for fat tails); a fractional
     # -Kelly tilt sets relative conviction; regime_derisk_factor shrinks the target in

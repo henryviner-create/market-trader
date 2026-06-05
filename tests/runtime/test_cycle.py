@@ -218,7 +218,9 @@ def test_run_paper_cycle_caps_book_size_for_diversification() -> None:
         symbols=symbols,
         prices=prices,
         broker=broker,
-        settings=PAPER,
+        # A realistic ceiling so each capped name clears one whole share (the default
+        # whole-share rounding would floor a $1k-book's tiny per-name slice to zero).
+        settings=Settings(execution_mode="paper", capital_ceiling=1_000_000.0),
         top_quantile=0.9,  # 0.9 * 30 = 27 ranked...
         max_positions=5,  # ...but the cap holds the book to 5
     )
