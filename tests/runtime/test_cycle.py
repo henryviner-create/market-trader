@@ -105,6 +105,31 @@ def test_run_paper_cycle_vol_target_mode_stays_inside_the_gross_cap() -> None:
     assert result.target_weights and gross <= 1.0 + 1e-9  # a valid, governed (capped) book
 
 
+def test_run_paper_cycle_size_book_mode_holds_whole_universe_governed() -> None:
+    # risk_weighting="size_book" with tilt_strength=0 is the governed equal-weight chassis:
+    # it holds the *whole* scored universe (breadth), not a top-N subset, stays inside the
+    # gross cap, and weights equally. This is the book we arm on the paper account first.
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols, n_days=150)  # enough history for covariance
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        risk_weighting="size_book",  # tilt_strength defaults to 0 -> governed 1/N
+    )
+
+    assert set(result.target_weights) == set(symbols)  # the whole universe, not a top-N subset
+    gross = sum(abs(w) for w in result.target_weights.values())
+    assert 0.0 < gross <= 1.0 + 1e-9  # governed and gross-capped
+    weights = list(result.target_weights.values())
+    assert max(weights) - min(weights) < 1e-9  # equal weight (nothing to tilt on at strength 0)
+
+
 def test_stop_loss_flattens_a_losing_holding_even_when_top_ranked() -> None:
     # A held name that's deep underwater is cut even though the signal loves it —
     # the absolute loss floor overrides the (relative) rank.
