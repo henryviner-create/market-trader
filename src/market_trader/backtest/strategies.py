@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 
 from market_trader.backtest.types import PointInTimeView, Strategy, Weights
@@ -242,3 +243,41 @@ class StackedSignalStrategy:
         top = ranked.sort_values(ascending=False).head(self.max_positions)
         w = 1.0 / len(top)
         return {str(s): w for s in top.index}
+
+
+@dataclass
+class ScoreTiltStrategy:
+    """Long-only book that *tilts* the whole tradable universe by a precomputed score
+    instead of selecting a subset — breadth-preserving alpha expression.
+
+    Naive equal-weight (1/N) is a famously hard benchmark to beat precisely because it
+    maximises breadth, the sqrt(breadth) term of the Fundamental Law. Selecting the top-N on
+    a modest-IC signal throws that breadth away faster than the signal adds selection value
+    (which is why the top-half :class:`StackedSignalStrategy` trails equal-weight on Sharpe).
+    This instead holds *every* tradable name and expresses the signal as an exponential tilt,
+    ``w_i proportional to exp(tilt_strength * z_i)``: at ``tilt_strength=0`` it is exactly
+    equal-weight; larger values lean harder toward the top-scoring names. The tilt is always
+    positive, so the book stays long-only with no clip. ``scores`` is the same point-in-time
+    ``{rebalance -> (symbol -> combined score)}`` map the stacked book uses; wrap in
+    :class:`VolTargetedStrategy` for the drawdown governor.
+    """
+
+    scores: dict[datetime, pd.Series]
+    tilt_strength: float = 1.0
+    name: str = "tilt"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        tradable = [str(s) for s in view.universe()]
+        if not tradable:
+            return {}
+        score = self.scores.get(as_of)
+        if score is not None:
+            # z-score guards the tilt's scale (so tilt_strength reads in cross-sectional
+            # std units); the clip stops a single outlier name from dominating the book.
+            z = _zscore(score.reindex(tradable).astype(float).fillna(0.0)).clip(-3.0, 3.0)
+            tilt = pd.Series(np.exp(self.tilt_strength * z.to_numpy()), index=z.index)
+            total = float(tilt.sum())
+            if total > 0:
+                return {str(s): float(tilt.loc[s] / total) for s in tradable}
+        w = 1.0 / len(tradable)  # no scores (or a degenerate tilt) -> plain equal weight
+        return {s: w for s in tradable}
