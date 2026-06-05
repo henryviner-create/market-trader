@@ -851,6 +851,40 @@ def cmd_ingest_llm_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_event_study(args: argparse.Namespace) -> int:
+    """Measure post-event drift (CAR + t-stat) per event type — the reactive-sleeve gate.
+
+    Read-only: detects events across the store's history and reports whether each type
+    shows significant abnormal drift. An event type only earns a place in the (future)
+    event sleeve if its CAR is significant out-of-sample. Needs insider/congress data in
+    the store (run ``ingest-filings`` first) and price history.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.memory.study_runner import run_event_study
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        studies = run_event_study(store, step_days=args.step, post_days=args.post)
+    except Exception as exc:
+        print(f"event-study failed: {exc}")
+        return 1
+
+    print(f"event-study [{args.post}d post-event drift, knowledge-time anchored, net of nothing]")
+    if not studies:
+        print("  no events detected (need insider/congress data + price history)")
+        return 0
+    for d in studies:
+        verdict = "SIGNIFICANT" if d.significant() else "not significant"
+        print(
+            f"  {d.label:26} n={d.n:4d}  CAR={d.mean_car:+.2%}  t={d.t_stat:+.2f}  "
+            f"hit={d.share_positive:.0%}  [{verdict}]"
+        )
+    return 0
+
+
 def cmd_ingest_prices_massive(args: argparse.Namespace) -> int:
     """Backfill cleaner EOD prices from Massive (grouped-daily; 1 call/trading day).
 
@@ -1173,6 +1207,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbols", default="", help="comma-separated tickers instead of the universe"
     )
     ingest_px.set_defaults(func=cmd_ingest_prices_massive)
+
+    event_study = sub.add_parser(
+        "event-study", help="measure post-event drift (CAR + t-stat) — the reactive-sleeve gate"
+    )
+    event_study.add_argument("--step", type=int, default=5, help="days between detection scans")
+    event_study.add_argument("--post", type=int, default=5, help="trading days of drift to measure")
+    event_study.set_defaults(func=cmd_event_study)
 
     build_universe = sub.add_parser(
         "build-universe",
