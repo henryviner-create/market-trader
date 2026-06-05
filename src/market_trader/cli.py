@@ -555,13 +555,15 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             name="insider_long@vol",
         )
         il_result = run_backtest(store, insider_long, schedule, universe=universe)
-        # The combination layer: trade the multi-signal mega-alpha, vol-governed. Hold a
-        # *broad* slice (top half of the universe by combined score) — breadth is half the
-        # Fundamental Law, so a 20-name book throws away diversification vs equal-weight.
+        # The combination layer: trade the multi-signal mega-alpha. Hold a *broad* slice
+        # (top half of the universe by combined score) — breadth is half the Fundamental
+        # Law. Run it both raw and vol-governed, so we can see how much Sharpe the
+        # (pro-cyclical) governor trades away for drawdown control.
+        stacked_raw = StackedSignalStrategy(
+            stacked_scores, max_positions=max(30, len(universe) // 2)
+        )
         stacked = VolTargetedStrategy(
-            StackedSignalStrategy(stacked_scores, max_positions=max(30, len(universe) // 2)),
-            target_vol=settings.target_vol,
-            name="stacked@vol",
+            stacked_raw, target_vol=settings.target_vol, name="stacked@vol"
         )
         st_result = run_backtest(store, stacked, schedule, universe=universe)
         summaries = {
@@ -571,6 +573,7 @@ def cmd_simulate(args: argparse.Namespace) -> int:
                 store, ls_governed, schedule, BorrowCostModel(), universe=universe
             ).summary,
             insider_long.name: il_result.summary,
+            stacked_raw.name: run_backtest(store, stacked_raw, schedule, universe=universe).summary,
             stacked.name: st_result.summary,
             "equal_weight": run_backtest(
                 store, EqualWeightStrategy(), schedule, universe=universe
