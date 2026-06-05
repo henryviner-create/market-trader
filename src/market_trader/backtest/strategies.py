@@ -9,11 +9,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import numpy as np
 import pandas as pd
 
 from market_trader.backtest.types import PointInTimeView, Strategy, Weights
+
+if TYPE_CHECKING:  # import-only for the annotation; the live import is lazy (avoids a cycle:
+    from market_trader.portfolio.risk import RiskLimits  # portfolio.risk -> backtest.types)
 
 
 def _zscore(s: pd.Series) -> pd.Series:
@@ -281,3 +285,43 @@ class ScoreTiltStrategy:
                 return {str(s): float(tilt.loc[s] / total) for s in tradable}
         w = 1.0 / len(tradable)  # no scores (or a degenerate tilt) -> plain equal weight
         return {s: w for s in tradable}
+
+
+@dataclass
+class SizedBookStrategy:
+    """Backtest wrapper around :func:`market_trader.portfolio.sizing.size_book` — the
+    unified live/backtest sizer.
+
+    Holds the whole tradable universe and sizes it through the *same* ``size_book`` the
+    live cycle calls, so the backtest validates the production sizing path exactly.
+    ``tilt_strength=0`` (or no ``scores``) is the governed equal-weight book we deploy
+    first; a positive ``tilt_strength`` leans it toward higher combined scores. The vol
+    governor and hard caps are applied inside ``size_book``, so — unlike the other
+    backtest strategies — this one already returns a risk-managed book.
+    """
+
+    target_vol: float
+    limits: RiskLimits
+    scores: dict[datetime, pd.Series] | None = None
+    tilt_strength: float = 0.0
+    lookback: int = 90
+    name: str = "sized"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        from market_trader.portfolio.sizing import size_book  # lazy: avoids an import cycle
+
+        returns = view.returns_panel()
+        if returns.empty:
+            return {}
+        tradable = [s for s in view.universe() if s in returns.columns]
+        if not tradable:
+            return {}
+        score = None if self.scores is None else self.scores.get(as_of)
+        return size_book(
+            returns[tradable],
+            target_vol=self.target_vol,
+            limits=self.limits,
+            scores=score,
+            tilt_strength=self.tilt_strength,
+            lookback=self.lookback,
+        )

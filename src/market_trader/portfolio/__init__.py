@@ -24,6 +24,7 @@ from market_trader.portfolio.risk import (
     apply_risk_limits,
     check_order,
 )
+from market_trader.portfolio.sizing import size_book
 from market_trader.portfolio.weighting import (
     composite_score,
     equal_weights,
@@ -51,5 +52,6 @@ __all__ = [
     "min_variance_weights",
     "orthogonality_penalty",
     "risk_parity_weights",
+    "size_book",
     "volatility_target_weights",
 ]
