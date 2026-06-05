@@ -61,6 +61,12 @@ class Settings(BaseSettings):
     # that; the sub-share remainder is immaterial on a diversified book. Set
     # MT_FRACTIONAL_SHARES=true only on a universe you know is fully fractionable.
     fractional_shares: bool = False
+    # No-trade band (turnover control). Skip rebalancing an existing position when the
+    # adjustment is smaller than this fraction of its target — so a daily book doesn't churn
+    # (and pay costs) on small drifts, especially the vol-governor's per-cycle rescaling. A
+    # full entry (no current position) or exit (target 0) always executes. 0 = off (rebalance
+    # to the exact target every cycle). 0.2 is a sane starting band for a daily book.
+    rebalance_band: float = 0.0
     # Risk-based sizing (the drawdown governor; see portfolio/sizing.py). The DD cap is
     # translated into a portfolio volatility target (halved for fat tails); a fractional
     # -Kelly tilt sets relative conviction; regime_derisk_factor shrinks the target in

@@ -262,3 +262,26 @@ def test_rebalance_submits_sells_before_buys() -> None:
     )
     assert [o.side for o in broker.submitted] == [OrderSide.SELL, OrderSide.BUY]
     assert len(orders) == 2
+
+
+def test_rebalance_band_skips_small_drifts_but_not_entries_or_exits() -> None:
+    # The no-trade band leaves a held name alone when its target moved only slightly
+    # (turnover control), while a full exit and a full entry still execute.
+    broker = _HoldingBroker({"HOLD": 100.0, "EXIT": 50.0})  # 100 sh HOLD, 50 sh EXIT
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=100_000.0,
+        max_orders_per_interval=50,
+        rebalance_band=0.2,
+    )
+    engine = ExecutionEngine(broker, settings=settings, limits=RiskLimits(max_position_weight=1.0))
+    # HOLD: 100 sh @ $100 = $10k held; target 0.105 -> $10.5k -> 105 sh; the 5-sh (4.8%)
+    # drift is inside the 20% band -> skipped. EXIT -> 0 (full exit). NEW -> entered.
+    orders = engine.rebalance(
+        {"HOLD": 0.105, "EXIT": 0.0, "NEW": 0.5},
+        {"HOLD": 100.0, "EXIT": 50.0, "NEW": 100.0},
+        as_of=T,
+    )
+    traded = {o.symbol for o in orders}
+    assert "HOLD" not in traded  # inside the band -> not churned
+    assert "EXIT" in traded and "NEW" in traded  # full exit / entry always execute

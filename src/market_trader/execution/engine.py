@@ -104,7 +104,20 @@ class ExecutionEngine:
             if not price or price <= 0:
                 continue
             target_qty = weight * deployable / price
-            delta = target_qty - positions.get(symbol, 0.0)
+            current_qty = positions.get(symbol, 0.0)
+            delta = target_qty - current_qty
+            # No-trade band: don't churn an existing position for a small adjustment (turnover
+            # is a real cost on a daily book, and the vol-governor rescales every name each
+            # cycle). A full entry (no current position) or exit (target 0) always executes;
+            # only mid-rebalance drifts inside the band are skipped.
+            band = self.settings.rebalance_band
+            if (
+                band > 0
+                and current_qty != 0
+                and target_qty != 0
+                and abs(delta) < band * abs(target_qty)
+            ):
+                continue
             qty = abs(delta)
             if not self.settings.fractional_shares:
                 # Whole shares: many small-caps aren't fractionable on the broker, and a
