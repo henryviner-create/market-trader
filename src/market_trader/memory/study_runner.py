@@ -57,3 +57,23 @@ def run_event_study(
         for etype, anchors in anchors_by_type.items()
     ]
     return sorted(studies, key=lambda d: d.n, reverse=True)
+
+
+def significant_event_types(
+    store: BitemporalStore,
+    *,
+    threshold: float = 1.96,
+    step_days: int = 5,
+    post_days: int = 5,
+) -> dict[str, EventOutcomeDistribution]:
+    """Event types whose post-event drift is significant *and positive* — the tradeable set.
+
+    The gate for the event sleeve: it may open a (long-drift) position only for an event type
+    returned here, so the sleeve trades on measured edge rather than on every detected event.
+    Empty until there is enough history and enough events to clear the t-stat ``threshold``.
+    """
+    return {
+        d.label: d
+        for d in run_event_study(store, step_days=step_days, post_days=post_days)
+        if d.significant(threshold) and d.mean_car > 0
+    }

@@ -7,7 +7,7 @@ from datetime import date
 from market_trader.collectors.edgar import FORM4_DATASET
 from market_trader.core.schema import Observation
 from market_trader.core.synthetic import synthetic_price_observations
-from market_trader.memory.study_runner import run_event_study
+from market_trader.memory.study_runner import run_event_study, significant_event_types
 from market_trader.storage import InMemoryBitemporalStore
 
 
@@ -43,3 +43,9 @@ def test_detects_and_aggregates_an_insider_cluster() -> None:
     studies = run_event_study(store, step_days=5, post_days=5)
     cluster = next((d for d in studies if d.label == "insider_cluster_buy"), None)
     assert cluster is not None and cluster.n >= 1  # the cluster was detected and a CAR measured
+
+    # The sleeve gate returns only significant, positive-drift types (a property that holds
+    # whatever the sample); an impossible t-stat threshold admits nothing.
+    for _label, d in significant_event_types(store, threshold=1.96).items():
+        assert d.significant(1.96) and d.mean_car > 0
+    assert significant_event_types(store, threshold=100.0) == {}
