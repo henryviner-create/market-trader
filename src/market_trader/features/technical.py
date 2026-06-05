@@ -20,10 +20,11 @@ from market_trader.storage.bitemporal import BitemporalStore
 class Momentum(Feature):
     family = "technical"
 
-    def __init__(self, lookback: int = 60, *, dataset: str = PRICE_DATASET) -> None:
+    def __init__(self, lookback: int = 60, *, skip: int = 0, dataset: str = PRICE_DATASET) -> None:
         self.lookback = lookback
+        self.skip = skip  # exclude the most recent `skip` periods (12-1 momentum: skip=21)
         self.dataset = dataset
-        self.name = f"mom_{lookback}"
+        self.name = f"mom_{lookback}" + (f"_skip{skip}" if skip else "")
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
         panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
@@ -35,7 +36,10 @@ class Momentum(Feature):
         if panel.empty or panel.shape[0] < self.lookback + 1:
             return pd.Series(index=list(symbols), dtype=float)
         p = panel.ffill()
-        mom = p.iloc[-1] / p.iloc[-1 - self.lookback] - 1.0
+        # Return from `lookback` ago up to `skip` ago. skip=0 is plain momentum; the
+        # academically robust form skips the most recent month (252-day, skip=21) to
+        # avoid the short-term reversal that contaminates raw 12-month momentum.
+        mom = p.iloc[-1 - self.skip] / p.iloc[-1 - self.lookback] - 1.0
         return mom.reindex(list(symbols))
 
 
@@ -62,10 +66,13 @@ class MeanReversion(Feature):
 class Volatility(Feature):
     family = "technical"
 
-    def __init__(self, window: int = 20, *, dataset: str = PRICE_DATASET) -> None:
+    def __init__(
+        self, window: int = 20, *, low_vol: bool = False, dataset: str = PRICE_DATASET
+    ) -> None:
         self.window = window
+        self.low_vol = low_vol  # True -> low-volatility factor (rank calm names high)
         self.dataset = dataset
-        self.name = f"vol_{window}"
+        self.name = f"{'lowvol' if low_vol else 'vol'}_{window}"
 
     def compute(self, store: BitemporalStore, as_of: datetime, symbols: Sequence[str]) -> pd.Series:
         panel = StorePriceView(store, as_of, dataset=self.dataset).price_panel()
@@ -78,4 +85,6 @@ class Volatility(Feature):
         if returns.empty:
             return pd.Series(index=list(symbols), dtype=float)
         vol = returns.tail(self.window).std(ddof=0)
-        return vol.reindex(list(symbols))
+        # The low-volatility anomaly: calm stocks outperform risk-adjusted, so the
+        # *factor* is -vol (low vol -> high score). Plain vol keeps the raw measure.
+        return (-vol if self.low_vol else vol).reindex(list(symbols))

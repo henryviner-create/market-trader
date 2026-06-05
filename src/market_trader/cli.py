@@ -712,7 +712,7 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
     from market_trader.core.time import DISTANT_FUTURE, utcnow
-    from market_trader.features import default_features
+    from market_trader.features import candidate_features
     from market_trader.runtime.signal_ic import measure_signal_ic
     from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
@@ -727,7 +727,7 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
         store.add_many(db.as_of(DISTANT_FUTURE))
         ics = measure_signal_ic(
             store,
-            default_features(),
+            candidate_features(),
             resolve_universe(settings.universe),
             utcnow(),
             horizon_days=args.horizon,
