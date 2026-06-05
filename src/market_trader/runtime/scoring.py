@@ -25,7 +25,12 @@ from market_trader.features.regime import macro_regime
 from market_trader.forecasting.dataset import REGIME_FEATURE, build_training_set
 from market_trader.forecasting.models import MomentumBaseline, make_stacking
 from market_trader.forecasting.pipeline import purged_cv_auc, train_forecaster
-from market_trader.portfolio import composite_score, equal_weights, ic_weights
+from market_trader.portfolio import (
+    composite_score,
+    equal_weights,
+    ic_weights,
+    orthogonality_penalty,
+)
 from market_trader.storage.bitemporal import BitemporalStore
 from market_trader.universe import Constituent, PointInTimeUniverse
 
@@ -33,31 +38,41 @@ from market_trader.universe import Constituent, PointInTimeUniverse
 ScoreFn = Callable[[pd.DataFrame, datetime], pd.Series]
 
 
-def composite_scorer() -> ScoreFn:
-    """The default: an equal-weighted z-score composite of the features."""
+def composite_scorer(*, orthogonalize: bool = False) -> ScoreFn:
+    """The default: an equal-weighted z-score composite of the features.
+
+    With ``orthogonalize`` the per-signal weights are scaled by an orthogonality penalty so
+    a cluster of redundant (mutually correlated) signals can't dominate the score.
+    """
 
     def score(matrix: pd.DataFrame, _at: datetime) -> pd.Series:
-        return composite_score(matrix, equal_weights(matrix.columns))
+        quality = orthogonality_penalty(matrix) if orthogonalize else None
+        return composite_score(matrix, equal_weights(matrix.columns), quality=quality)
 
     return score
 
 
-def ic_weighted_scorer(ic: dict[str, float], *, min_abs_ic: float = 0.0) -> ScoreFn:
+def ic_weighted_scorer(
+    ic: dict[str, float], *, min_abs_ic: float = 0.0, orthogonalize: bool = False
+) -> ScoreFn:
     """Composite weighted by each signal's measured IC, dropping the weak ones.
 
     Sign-aware (a negative-IC signal is inverted, not discarded) and self-pruning
     (|IC| < ``min_abs_ic`` -> zero weight). If no signal clears the bar — e.g. a
     cold start with nothing graded yet — it falls back to the equal-weight
-    composite, so enabling this never *worsens* the baseline.
+    composite, so enabling this never *worsens* the baseline. ``orthogonalize`` additionally
+    down-weights redundant (mutually correlated) signals.
     """
 
     def score(matrix: pd.DataFrame, _at: datetime) -> pd.Series:
         ics = pd.Series({c: float(ic.get(str(c), 0.0)) for c in matrix.columns}, dtype=float)
         if min_abs_ic > 0:
             ics = ics.where(ics.abs() >= min_abs_ic, 0.0)  # auto-prune decayed signals
-        if float(ics.abs().sum()) == 0.0:
-            return composite_score(matrix, equal_weights(matrix.columns))
-        return composite_score(matrix, ic_weights(ics))
+        quality = orthogonality_penalty(matrix) if orthogonalize else None
+        weights = (
+            equal_weights(matrix.columns) if float(ics.abs().sum()) == 0.0 else ic_weights(ics)
+        )
+        return composite_score(matrix, weights, quality=quality)
 
     return score
 
@@ -126,9 +141,10 @@ def build_scorer(
     """
     if settings.scorer.strip().lower() == "forecast":
         return forecast_scorer(store, feature_store, symbols, as_of)
+    ortho = settings.orthogonalize_signals
     if settings.ic_weighting and ic:
-        return ic_weighted_scorer(ic, min_abs_ic=settings.ic_min_abs)
-    return composite_scorer()
+        return ic_weighted_scorer(ic, min_abs_ic=settings.ic_min_abs, orthogonalize=ortho)
+    return composite_scorer(orthogonalize=ortho)
 
 
 def forecaster_vs_baseline_auc(
