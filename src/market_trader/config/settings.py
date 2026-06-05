@@ -130,6 +130,11 @@ class Settings(BaseSettings):
     # over from its highs rather than holding it blindly. 0 = off. Complements the
     # entry-based stop_loss_pct (absolute floor) and the rank hysteresis (relative).
     trailing_stop_pct: float = 0.0
+    # Opus thesis-break exit: flatten a HELD name once its point-in-time llm_news_sentiment
+    # (the nightly Opus factory's output) turns to <= -threshold, i.e. materially bad news on
+    # a position. Defensive (exit-only, never an entry), reads precomputed sentiment (no LLM
+    # call in the cycle). 0 = off; 0.5 cuts on a strong, high-confidence negative read.
+    thesis_exit_threshold: float = 0.0
     # News signal (daily cycle only; OFF by default). When on, the cycle pulls
     # recent GDELT articles for the universe and adds news-flow + sentiment
     # features to the ranking. Per-symbol fetch is heavy, so it's daily, not

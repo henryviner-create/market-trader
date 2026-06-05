@@ -183,6 +183,37 @@ def test_trailing_stop_cuts_a_name_that_rolled_over_from_its_high() -> None:
     assert _trailing_stops(store, as_of, positions, prices, 0.0) == set()  # 0 disables
 
 
+def test_thesis_break_exit_cuts_a_holding_with_strongly_negative_news() -> None:
+    # The Opus thesis-monitor: a HELD name whose nightly news-sentiment turned strongly
+    # negative is flagged for exit; a held name with mild/no news is kept.
+    from datetime import UTC, datetime, timedelta
+
+    from market_trader.collectors.llm_features import LLMSignalCollector
+    from market_trader.execution.broker import Position
+    from market_trader.reasoning.extraction import ExtractedSignal
+    from market_trader.runtime.cycle import _thesis_break_exits
+
+    as_of = datetime(2024, 6, 10, 12, tzinfo=UTC)
+    kt = as_of - timedelta(days=1)
+    store = InMemoryBitemporalStore()
+    store.add_many(
+        LLMSignalCollector().normalize(
+            [
+                (ExtractedSignal("BAD", -0.9, 0.9, "fraud probe"), kt),  # -0.81 sentiment
+                (ExtractedSignal("OKAY", 0.2, 0.5, "routine"), kt),  # +0.10
+            ]
+        )
+    )
+    positions = [
+        Position("BAD", 10.0, 50.0),
+        Position("OKAY", 10.0, 50.0),
+        Position("NONEWS", 10.0, 50.0),
+    ]
+
+    assert _thesis_break_exits(store, as_of, positions, 0.5) == {"BAD"}  # strong negative -> exit
+    assert _thesis_break_exits(store, as_of, positions, 0.0) == set()  # 0 disables
+
+
 def test_reserved_symbols_are_neither_selected_nor_flattened() -> None:
     # A sleeve-owned name must be left completely alone by the daily book: not
     # bought (even if top-ranked) and not flattened (even though it's held).
