@@ -156,6 +156,33 @@ def test_stop_loss_flattens_a_losing_holding_even_when_top_ranked() -> None:
     assert any(o.symbol == "S3" and o.side == OrderSide.SELL for o in result.orders)
 
 
+def test_trailing_stop_cuts_a_name_that_rolled_over_from_its_high() -> None:
+    # Exit discipline reacting to performance: a name that ramped up then broke down from
+    # its trailing high is cut; a name still near its high is kept.
+    from market_trader.collectors.prices import PriceBar, PriceCollector
+    from market_trader.execution.broker import Position
+    from market_trader.runtime.cycle import _trailing_stops
+
+    days = pd.bdate_range("2024-01-01", periods=70)
+    bars = []
+    for i, d in enumerate(days):
+        loser = 50.0 + i if i < 50 else 100.0 - (i - 50) * 3  # peaks ~99, then falls to ~43
+        winner = 50.0 + i * 0.5  # steadily near its high
+        bars.append(PriceBar(date=d.date(), symbol="LOSER", close=loser))
+        bars.append(PriceBar(date=d.date(), symbol="WINNER", close=winner))
+    obs = PriceCollector().normalize(bars)
+    store = InMemoryBitemporalStore()
+    store.add_many(obs)
+    as_of = max(o.knowledge_time for o in obs)
+    positions = [Position("LOSER", 10.0, 60.0), Position("WINNER", 10.0, 50.0)]
+    prices = {"LOSER": 43.0, "WINNER": 84.5}
+
+    stopped = _trailing_stops(store, as_of, positions, prices, 0.15, window=60)
+    assert "LOSER" in stopped  # ~56% below its trailing high -> cut
+    assert "WINNER" not in stopped  # still at its high -> kept
+    assert _trailing_stops(store, as_of, positions, prices, 0.0) == set()  # 0 disables
+
+
 def test_reserved_symbols_are_neither_selected_nor_flattened() -> None:
     # A sleeve-owned name must be left completely alone by the daily book: not
     # bought (even if top-ranked) and not flattened (even though it's held).

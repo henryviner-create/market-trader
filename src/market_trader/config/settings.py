@@ -125,6 +125,11 @@ class Settings(BaseSettings):
     # your losers" rail. 0 = off. Complements (does not replace) the rank
     # hysteresis: hysteresis is relative, this is an absolute loss floor.
     stop_loss_pct: float = 0.0
+    # Trailing/breakdown stop: flatten a holding once it is this far below its trailing
+    # high (default 60d), even if still above entry — the book reacts to a name rolling
+    # over from its highs rather than holding it blindly. 0 = off. Complements the
+    # entry-based stop_loss_pct (absolute floor) and the rank hysteresis (relative).
+    trailing_stop_pct: float = 0.0
     # News signal (daily cycle only; OFF by default). When on, the cycle pulls
     # recent GDELT articles for the universe and adds news-flow + sentiment
     # features to the ranking. Per-symbol fetch is heavy, so it's daily, not
