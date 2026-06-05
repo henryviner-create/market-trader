@@ -95,6 +95,29 @@ def test_engine_paper_rebalance_fills_to_target() -> None:
     assert abs(pos["B"] - 1000.0) < 1e-6  # 0.5*100k/50
 
 
+def test_engine_orders_whole_shares_by_default() -> None:
+    # Small-caps often aren't fractionable on the broker; a fractional order 403s and aborts
+    # the rebalance. The default whole-share rounding keeps every quantity an integer.
+    broker = PaperBroker({"A": 30.0}, starting_cash=100_000.0)
+    orders = _engine(broker, ceiling=1_000.0).rebalance({"A": 1.0}, {"A": 30.0}, as_of=T)
+    assert len(orders) == 1
+    assert orders[0].qty == 33.0  # 1.0*1000/30 = 33.33... floored to 33 whole shares
+    assert orders[0].qty == int(orders[0].qty)
+
+
+def test_engine_fractional_shares_when_opted_in() -> None:
+    broker = PaperBroker({"A": 30.0}, starting_cash=100_000.0)
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=1_000.0,
+        max_orders_per_interval=50,
+        fractional_shares=True,
+    )
+    engine = ExecutionEngine(broker, settings=settings, limits=RiskLimits(max_position_weight=1.0))
+    orders = engine.rebalance({"A": 1.0}, {"A": 30.0}, as_of=T)
+    assert orders[0].qty > 33.0 and orders[0].qty != int(orders[0].qty)  # fractional preserved
+
+
 def test_engine_refuses_live_when_not_armed() -> None:
     engine = _engine(PaperBroker({"A": 100.0}), mode="live", live=False)
     with pytest.raises(RuntimeError):  # assert_live_allowed fails closed
