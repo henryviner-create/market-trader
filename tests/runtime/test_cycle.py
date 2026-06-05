@@ -57,6 +57,54 @@ def test_run_paper_cycle_logs_predictions_when_enabled() -> None:
     assert load_predictions(store, as_of, model_version="composite")  # logged for later grading
 
 
+def test_vol_target_weights_scales_a_high_vol_book_to_target() -> None:
+    import numpy as np
+
+    from market_trader.portfolio.construction import ledoit_wolf_cov
+    from market_trader.runtime.cycle import _vol_target_weights
+
+    rng = np.random.default_rng(0)
+    dates = pd.bdate_range("2022-01-03", periods=120)
+    syms = ["A", "B", "C", "D"]
+    # ~3%/day -> ~48% annualised, far above a 10% target, so the book must scale DOWN
+    rets = pd.DataFrame(rng.normal(0.0, 0.03, (len(dates), 4)), index=dates, columns=syms)
+    base = dict.fromkeys(syms, 0.25)  # equal-weight, gross 1.0
+
+    out = _vol_target_weights(base, rets, target_vol=0.10, max_gross=1.0)
+    assert 0.0 < sum(out.values()) < 1.0  # exposure cut into cash
+
+    cov = ledoit_wolf_cov(rets[list(out)])
+    wv = pd.Series(out).reindex(cov.columns).fillna(0.0).to_numpy(dtype=float)
+    ann_vol = float(np.sqrt(wv @ cov.to_numpy(dtype=float) @ wv) * np.sqrt(252))
+    assert abs(ann_vol - 0.10) < 0.01  # book sized to the vol budget
+
+
+def test_vol_target_weights_no_history_is_a_passthrough() -> None:
+    from market_trader.runtime.cycle import _vol_target_weights
+
+    base = {"A": 0.5, "B": 0.5}
+    thin = pd.DataFrame({"A": [0.01, -0.02], "B": [0.0, 0.01]})  # 2 rows < 20 -> too little
+    assert _vol_target_weights(base, thin, target_vol=0.10, max_gross=1.0) == base
+
+
+def test_run_paper_cycle_vol_target_mode_stays_inside_the_gross_cap() -> None:
+    symbols = [f"S{i}" for i in range(8)]
+    store, as_of, prices = _seeded_store(symbols, n_days=150)  # enough history for covariance
+    broker = PaperBroker(prices, starting_cash=100_000.0)
+
+    result = run_paper_cycle(
+        store,
+        as_of=as_of,
+        symbols=symbols,
+        prices=prices,
+        broker=broker,
+        settings=PAPER,
+        risk_weighting="vol_target",
+    )
+    gross = sum(abs(w) for w in result.target_weights.values())
+    assert result.target_weights and gross <= 1.0 + 1e-9  # a valid, governed (capped) book
+
+
 def test_stop_loss_flattens_a_losing_holding_even_when_top_ranked() -> None:
     # A held name that's deep underwater is cut even though the signal loves it —
     # the absolute loss floor overrides the (relative) rank.
