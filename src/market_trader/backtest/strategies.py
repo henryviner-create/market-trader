@@ -185,3 +185,31 @@ class LongShortInsiderStrategy:
         out = {str(s): -per for s in ranked.index[:k]}  # most net selling -> short
         out.update({str(s): per for s in ranked.index[-k:]})  # most net buying -> long
         return out
+
+
+@dataclass
+class InsiderLongStrategy:
+    """Long-only book of the strongest insider net-buyers — the validated signal at its
+    own (medium-term) horizon, undiluted by the price composite.
+
+    Only net *buyers* enter (selling is noise); equal-weight the top ``max_positions`` by
+    net buys. Pair with a slow rebalance (~monthly) so the ~90-day signal isn't churned,
+    and wrap in :class:`VolTargetedStrategy` for the drawdown governor.
+    """
+
+    insider_scores: dict[datetime, pd.Series]
+    max_positions: int = 30
+    name: str = "insider_long"
+
+    def target_weights(self, view: PointInTimeView, as_of: datetime) -> Weights:
+        scores = self.insider_scores.get(as_of)
+        if scores is None:
+            return {}
+        tradable = set(view.universe())
+        buyers = scores.dropna()
+        buyers = buyers[(buyers > 0.0) & buyers.index.isin(tradable)]
+        if buyers.empty:
+            return {}
+        top = buyers.sort_values(ascending=False).head(self.max_positions)
+        w = 1.0 / len(top)
+        return {str(s): w for s in top.index}
