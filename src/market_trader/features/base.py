@@ -81,6 +81,7 @@ def candidate_features() -> list[Feature]:
     """
     from market_trader.features.flow import InsiderNetBuys
     from market_trader.features.fundamental import EarningsSurprise, EarningsYield
+    from market_trader.features.llm import LLMNewsSentiment
     from market_trader.features.technical import Momentum, Volatility
 
     return [
@@ -90,6 +91,7 @@ def candidate_features() -> list[Feature]:
         Volatility(window=120, low_vol=True),
         EarningsYield(),
         EarningsSurprise(),
+        LLMNewsSentiment(),  # Opus-extracted news sentiment — the breadth-factory candidate
     ]
 
 
