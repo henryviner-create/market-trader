@@ -100,6 +100,12 @@ class Settings(BaseSettings):
     # no-op on a cold start. Composite scorer only.
     ic_weighting: bool = True
     ic_min_abs: float = 0.02
+    # Orthogonalize the composite: down-weight signals that are redundant (correlated with
+    # each other across the cross-section) so a cluster of similar signals can't dominate the
+    # score (Grinold "combining alphas"). Composite/IC-weighted scorer only; OFF by default so
+    # the graded prediction history is unchanged. Harmless on the governed-1/N book (which
+    # ignores scores) -- enable it (MT_ORTHOGONALIZE_SIGNALS=true) alongside a score tilt.
+    orthogonalize_signals: bool = False
     # Holding discipline + sizing. exit_band_multiple keeps a held name until it
     # leaves the top (entry_count * multiple) — so the book holds winners instead
     # of churning on rank noise (your "it sells too quickly"). risk_weighting:

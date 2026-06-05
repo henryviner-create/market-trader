@@ -24,6 +24,21 @@ from market_trader.storage import InMemoryBitemporalStore
 _AT = datetime(2024, 1, 1)
 
 
+def test_orthogonalize_lifts_an_independent_signal_over_a_redundant_pair() -> None:
+    # Two identical signals + one independent: naive equal-weighting double-counts the pair,
+    # so the composite tracks it; orthogonalization down-weights the redundant pair, lifting
+    # the independent signal's influence (Grinold "combining alphas").
+    idx = ["A", "B", "C", "D", "E"]
+    dup = [2.0, 1.0, 0.0, -1.0, -2.0]
+    indep = [1.0, -2.0, 2.0, -1.0, 0.0]
+    matrix = pd.DataFrame({"dup1": dup, "dup2": dup, "indep": indep}, index=idx)
+    indep_s = pd.Series(indep, index=idx)
+
+    naive = composite_scorer()(matrix, _AT)
+    ortho = composite_scorer(orthogonalize=True)(matrix, _AT)
+    assert ortho.corr(indep_s) > naive.corr(indep_s)  # the unique signal gains influence
+
+
 def _store(symbols: list[str], n_days: int = 170):
     obs = synthetic_price_observations(
         symbols=symbols, start=date(2023, 1, 2), n_days=n_days, seed=11
