@@ -76,3 +76,33 @@ def test_size_book_cold_start_falls_back_to_equal_weight() -> None:
     assert set(w) == set(rets.columns)
     vals = list(w.values())
     assert max(vals) - min(vals) < 1e-9  # ungoverned, but a clean equal book
+
+
+def test_tilt_extracts_real_alpha_and_inverts_on_a_wrong_signal() -> None:
+    # Pipeline validation: when a score genuinely predicts returns, tilting the book toward
+    # it beats governed equal-weight; on the *negated* (wrong) score the same machinery
+    # underperforms. So the construction extracts real signal and never manufactures fake
+    # alpha — which isolates a live IC~0 result as a data problem, not a sizing bug.
+    rng = np.random.default_rng(7)
+    n, t, h = 40, 800, 21
+    syms = [f"S{i}" for i in range(n)]
+    alpha = np.linspace(-1.0, 1.0, n)  # latent cross-sectional signal
+    rets = rng.normal(alpha * 0.0012, 0.02, (t, n))  # signal lives in the mean
+    returns = pd.DataFrame(rets, index=pd.bdate_range("2020-01-01", periods=t), columns=syms)
+    limits = RiskLimits(max_position_weight=1.0, max_gross_exposure=1.0)
+
+    def book_return(score: pd.Series, tilt: float) -> float:
+        equity = 1.0
+        for i in range(120, t - h, h):
+            w = size_book(
+                returns.iloc[:i], target_vol=0.10, limits=limits, scores=score, tilt_strength=tilt
+            )
+            fwd = (1.0 + returns.iloc[i : i + h][list(w)]).prod() - 1.0
+            equity *= 1.0 + float(sum(w[s] * fwd[s] for s in w))
+        return equity - 1.0
+
+    flat = book_return(pd.Series(alpha, index=syms), 0.0)  # governed equal-weight
+    tilted = book_return(pd.Series(alpha, index=syms), 2.0)  # lean on the true signal
+    wrong = book_return(pd.Series(-alpha, index=syms), 2.0)  # lean on the negated signal
+    assert tilted > flat  # a real signal, expressed as a tilt, is extracted
+    assert wrong < flat  # the same machinery on a wrong signal loses -> no fake alpha
