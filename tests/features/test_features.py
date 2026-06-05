@@ -166,7 +166,7 @@ def test_feature_store_matrix_shape() -> None:
         day_close(date(2023, 4, 1)), ["UP", "DOWN"]
     )
     assert list(matrix.index) == ["UP", "DOWN"]
-    assert {"mom_60", "vol_20", "insider_net_buys_90d"} <= set(matrix.columns)
+    assert {"mom_60", "vol_20", "insider_net_buys_90d_opp"} <= set(matrix.columns)
 
 
 def test_opportunistic_filter_drops_scheduled_insiders() -> None:
