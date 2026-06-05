@@ -1098,6 +1098,87 @@ def cmd_cycle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_replay(args: argparse.Namespace) -> int:
+    """Walk-forward replay of the *learning* system on history (the 'train as if N years ago' run).
+
+    Advances the IC-learning loop step by step on point-in-time data: a simulated, honest track
+    record AND the live measured-IC series (the overfit detector). Quant-side only — it does not
+    use the LLM signal, which can't be validly backtested (the model has seen the future).
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from datetime import date, timedelta
+
+    import pandas as pd
+
+    from market_trader.backtest.pit import observations_to_price_frame
+    from market_trader.backtest.replay import replay_learning
+    from market_trader.collectors import IngestionGateway, PriceCollector
+    from market_trader.collectors.alpaca import AlpacaDataClient
+    from market_trader.core.synthetic import PRICE_DATASET
+    from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.features import default_features
+    from market_trader.portfolio import RiskLimits
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        universe = resolve_universe(settings.universe)
+        end = date.today()
+        data = AlpacaDataClient(settings.alpaca_key_id or "", settings.alpaca_secret_key or "")
+        records = data.fetch_daily_bars(
+            universe, start=end - timedelta(days=args.days), end=end, feed=settings.alpaca_data_feed
+        )
+        IngestionGateway(store).ingest(PriceCollector().normalize(records))
+        observations = list(store.as_of(DISTANT_FUTURE))
+        panel = observations_to_price_frame([o for o in observations if o.dataset == PRICE_DATASET])
+        schedule = [ts.to_pydatetime() for ts in pd.DatetimeIndex(panel.index)][
+            60 :: args.rebalance
+        ]
+        if len(schedule) < 5:
+            print("replay: not enough price history (try a larger --days)")
+            return 1
+        limits = RiskLimits(
+            max_position_weight=settings.max_position_weight,
+            max_gross_exposure=settings.max_gross_exposure,
+            max_net_exposure=settings.max_net_exposure,
+        )
+        result = replay_learning(
+            observations,
+            universe=universe,
+            schedule=schedule,
+            features=default_features(),
+            horizon_days=args.rebalance,
+            target_vol=settings.target_vol,
+            limits=limits,
+            tilt_strength=args.tilt,
+        )
+    except Exception as exc:
+        print(f"replay failed: {exc}")
+        return 1
+
+    s = result.summary
+    print(
+        f"replay [learning loop, {len(schedule)} rebalances every {args.rebalance}d, tilt={args.tilt}]"
+    )
+    print(
+        f"  ann={s.ann_return:+.1%}  vol={s.ann_vol:.1%}  sharpe={s.sharpe:+.2f}  "
+        f"max_dd={s.max_drawdown:.1%}"
+    )
+    if not result.ic_history.empty:
+        early = result.ic_history.head(3).mean()
+        late = result.ic_history.tail(3).mean()
+        print("  measured IC (live learning loop) — early vs late rebalances:")
+        for sig in result.ic_history.columns:
+            print(
+                f"    {sig:24} early={early.get(sig, float('nan')):+.3f}  late={late.get(sig, float('nan')):+.3f}"
+            )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="market-trader", description="market-trader engine CLI")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1149,6 +1230,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--rebalance", type=int, default=5, help="trading days between rebalances (~21 = monthly)"
     )
     simulate.set_defaults(func=cmd_simulate)
+
+    replay = sub.add_parser(
+        "replay",
+        help="walk-forward replay of the learning system (PIT track record + live IC over time)",
+    )
+    replay.add_argument("--days", type=int, default=2555, help="history window in days")
+    replay.add_argument(
+        "--rebalance", type=int, default=21, help="trading days between rebalances (= IC horizon)"
+    )
+    replay.add_argument(
+        "--tilt", type=float, default=1.0, help="tilt strength on the learned score"
+    )
+    replay.set_defaults(func=cmd_replay)
 
     ingest_filings = sub.add_parser(
         "ingest-filings", help="backfill SEC Form-4 insider filings for the universe"
