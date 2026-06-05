@@ -247,6 +247,37 @@ def cmd_alpaca_check(_: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_preflight(_: argparse.Namespace) -> int:
+    """Config-doctor: audit the live configuration before it trades (read-only)."""
+    settings = get_settings()
+    from market_trader.runtime.preflight import Level, preflight_checks, worst_level
+    from market_trader.universe.liquid import resolve_universe
+
+    db_ok = check_database(settings.database_url)
+    try:
+        universe_size = len(resolve_universe(settings.universe))
+    except Exception:
+        universe_size = 0
+    equity: float | None = None
+    if settings.alpaca_key_id and settings.alpaca_secret_key:
+        from market_trader.execution.alpaca import AlpacaBroker
+
+        try:
+            broker = AlpacaBroker(
+                settings.alpaca_key_id, settings.alpaca_secret_key, paper=settings.alpaca_paper
+            )
+            equity = broker.get_account().equity
+        except Exception:
+            equity = None  # unreachable -> keys-set check still passes, equity check is skipped
+    checks = preflight_checks(settings, equity=equity, db_ok=db_ok, universe_size=universe_size)
+    badge = {Level.OK: " ok ", Level.WARN: "WARN", Level.FAIL: "FAIL"}
+    for c in checks:
+        print(f"[{badge[c.level]}] {c.name:16} {c.detail}")
+    worst = worst_level(checks)
+    print(f"preflight: {worst.value.upper()}")
+    return 1 if worst is Level.FAIL else 0
+
+
 def _portfolio_summary(account: Account, positions: list[Position]) -> str:
     """Plain-English P&L snapshot from an account and its open positions."""
     deployed = sum(p.market_value for p in positions)
@@ -964,6 +995,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("alpaca-check", help="probe the Alpaca paper account").set_defaults(
         func=cmd_alpaca_check
     )
+    sub.add_parser(
+        "preflight", help="config-doctor: audit the live config before trading (read-only)"
+    ).set_defaults(func=cmd_preflight)
     sub.add_parser("llm-check", help="probe the hosted Anthropic API").set_defaults(
         func=cmd_llm_check
     )
