@@ -5,6 +5,13 @@ by the data — it may only assert what the signals/flow support, and must state
 case against. It is an input to judgement, never a verdict.
 """
 
+from market_trader.reasoning.agents import (
+    AgentSignal,
+    AnalystContext,
+    AnalystRole,
+    PortfolioManagerAgent,
+    run_analyst_panel,
+)
 from market_trader.reasoning.briefing import (
     BriefingContext,
     build_briefing_context,
@@ -20,13 +27,18 @@ from market_trader.reasoning.llm import (
 )
 
 __all__ = [
+    "AgentSignal",
+    "AnalystContext",
+    "AnalystRole",
     "AnthropicProvider",
     "BriefingContext",
     "LLMError",
     "LLMProvider",
     "MockLLMProvider",
+    "PortfolioManagerAgent",
     "anthropic_provider_from_settings",
     "build_briefing_context",
     "generate_llm_brief",
     "render_brief_markdown",
+    "run_analyst_panel",
 ]
