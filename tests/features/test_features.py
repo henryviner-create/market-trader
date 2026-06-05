@@ -18,6 +18,8 @@ from market_trader.features import (
     FeatureStore,
     InsiderNetBuys,
     Momentum,
+    Volatility,
+    candidate_features,
     default_features,
     macro_regime,
 )
@@ -155,3 +157,71 @@ def test_feature_store_matrix_shape() -> None:
     )
     assert list(matrix.index) == ["UP", "DOWN"]
     assert {"mom_60", "vol_20", "insider_net_buys_90d"} <= set(matrix.columns)
+
+
+def test_opportunistic_filter_drops_scheduled_insiders() -> None:
+    # "Sched" files every January for 4 years -> routine -> dropped; "Irreg" buys once
+    # off-schedule -> opportunistic -> kept (Cohen-Malloy-Pomorski).
+    recs = [
+        {
+            "issuer_ticker": t,
+            "insider_name": n,
+            "transaction_code": "P",
+            "transaction_date": td,
+            "filing_date": fd,
+        }
+        for t, n, td, fd in [
+            ("RTN", "Sched", "2021-01-15", "2021-01-16"),
+            ("RTN", "Sched", "2022-01-15", "2022-01-16"),
+            ("RTN", "Sched", "2023-01-15", "2023-01-16"),
+            ("RTN", "Sched", "2024-01-15", "2024-01-16"),  # in the 90d window
+            ("OPP", "Irreg", "2023-12-10", "2023-12-11"),  # in the 90d window
+        ]
+    ]
+    store = InMemoryBitemporalStore()
+    IngestionGateway(store).ingest(Form4Collector().normalize(recs))
+    as_of = day_close(date(2024, 2, 1))
+
+    allf = InsiderNetBuys(window_days=90).compute(store, as_of, ["RTN", "OPP"])
+    assert allf["RTN"] == 1.0 and allf["OPP"] == 1.0  # raw: both recent buys counted
+
+    opp = InsiderNetBuys(window_days=90, opportunistic_only=True).compute(
+        store, as_of, ["RTN", "OPP"]
+    )
+    assert opp["RTN"] == 0.0  # the scheduled January filer is stripped out
+    assert opp["OPP"] == 1.0  # the irregular buyer is kept
+
+
+def test_momentum_skip_excludes_the_recent_window() -> None:
+    store = InMemoryBitemporalStore()
+    closes = [100 * (1.01**i) for i in range(60)] + [50.0] * 10  # long uptrend, recent crash
+    days = _ingest_prices(store, "X", closes)
+    as_of = day_close(days[-1])
+
+    plain = Momentum(lookback=50).compute(store, as_of, ["X"])["X"]
+    skipped = Momentum(lookback=50, skip=10).compute(store, as_of, ["X"])["X"]
+    assert plain < 0.0  # the recent crash drags raw momentum negative
+    assert skipped > 0.0  # skipping the last 10 days restores the underlying uptrend
+
+
+def test_low_volatility_factor_is_negative_volatility() -> None:
+    store = InMemoryBitemporalStore()
+    calm = [100 * (1.001**i) for i in range(40)]
+    wild = [100.0]
+    for i in range(39):
+        wild.append(wild[-1] * (1.08 if i % 2 == 0 else 0.93))
+    _ingest_prices(store, "CALM", calm)
+    days = _ingest_prices(store, "WILD", wild)
+    as_of = day_close(days[-1])
+
+    vol = Volatility(window=30).compute(store, as_of, ["CALM", "WILD"])
+    lowvol = Volatility(window=30, low_vol=True).compute(store, as_of, ["CALM", "WILD"])
+    assert vol["WILD"] > vol["CALM"]  # WILD is the more volatile name
+    assert lowvol["CALM"] > lowvol["WILD"]  # the low-vol factor flips the ranking
+    assert abs(lowvol["CALM"] - (-vol["CALM"])) < 1e-12  # it is exactly -vol
+
+
+def test_candidate_features_extends_default_with_gated_signals() -> None:
+    names = {f.name for f in candidate_features()}
+    assert {f.name for f in default_features()} <= names  # candidates are a superset
+    assert {"insider_net_buys_90d_opp", "mom_252_skip21", "lowvol_120"} <= names

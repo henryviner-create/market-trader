@@ -51,7 +51,12 @@ class FeatureStore:
 
 
 def default_features() -> list[Feature]:
-    """A small, decorrelated starter set. Each must earn its keep out-of-sample."""
+    """The *validated* live set the scorer trades. Each earned its keep out-of-sample.
+
+    A new signal does not go here until it clears the gate (positive, significant OOS IC
+    via ``signal-ic`` over ``candidate_features``); that keeps unvalidated signals out of
+    live sizing.
+    """
     from market_trader.features.flow import CongressLeadershipBuys, InsiderNetBuys
     from market_trader.features.technical import MeanReversion, Momentum, Volatility
 
@@ -61,4 +66,23 @@ def default_features() -> list[Feature]:
         Volatility(window=20),
         InsiderNetBuys(window_days=90),
         CongressLeadershipBuys(window_days=120),
+    ]
+
+
+def candidate_features() -> list[Feature]:
+    """``default_features`` plus signals under evaluation, for ``signal-ic`` to measure.
+
+    A candidate must show a positive, significant out-of-sample IC here before it is
+    promoted into ``default_features`` (the live scorer) — the "earn its place" gate.
+    Current candidates: the opportunistic-insider refinement (Cohen-Malloy-Pomorski), the
+    academically robust 12-1 momentum (252-day, skip 21), and a low-volatility factor.
+    """
+    from market_trader.features.flow import InsiderNetBuys
+    from market_trader.features.technical import Momentum, Volatility
+
+    return [
+        *default_features(),
+        InsiderNetBuys(window_days=90, opportunistic_only=True),
+        Momentum(lookback=252, skip=21),
+        Volatility(window=120, low_vol=True),
     ]

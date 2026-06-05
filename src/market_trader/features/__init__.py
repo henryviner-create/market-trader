@@ -8,6 +8,7 @@ backtest and live, eliminating train/serve skew at the source.
 from market_trader.features.base import (
     Feature,
     FeatureStore,
+    candidate_features,
     cross_sectional_zscore,
     default_features,
 )
@@ -23,6 +24,7 @@ __all__ = [
     "MeanReversion",
     "Momentum",
     "Volatility",
+    "candidate_features",
     "cross_sectional_zscore",
     "default_features",
     "macro_regime",
