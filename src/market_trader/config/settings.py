@@ -142,6 +142,14 @@ class Settings(BaseSettings):
     insider_fetch_budget_seconds: float = 90.0
     insider_lookback_days: int = 400
 
+    # Massive market-data (Polygon-compatible REST). An optional, cleaner EOD price source
+    # than the free IEX feed (which silently drops thin small-caps). Free tier = EOD US
+    # equities, 5 calls/min, ~2y history — enough for the daily book's coverage. Key is
+    # env-only (MT_MASSIVE_API_KEY); base URL is overridable to match the account's paths.
+    # Used only by the opt-in `ingest-prices-massive` backfill, never automatically.
+    massive_api_key: str | None = None
+    massive_base_url: str = "https://api.massive.com"
+
     # --- Broker (Alpaca; paper-first) -----------------------------------
     # Paper keys from https://app.alpaca.markets/ (Paper). Env-only, never
     # committed. alpaca_paper=true uses the paper endpoints.

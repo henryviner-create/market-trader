@@ -851,6 +851,50 @@ def cmd_ingest_llm_signals(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_prices_massive(args: argparse.Namespace) -> int:
+    """Backfill cleaner EOD prices from Massive (grouped-daily; 1 call/trading day).
+
+    A better-coverage alternative to the free IEX feed for the daily book's prices.
+    Rate-limited to the free tier (5/min) and resumable; prices land in the same
+    price.ohlcv dataset, so they flow through the identical point-in-time machinery.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+    if not settings.massive_api_key:
+        print("ingest-prices-massive: MT_MASSIVE_API_KEY not set")
+        return 1
+
+    from datetime import date, timedelta
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.massive import MassiveClient
+    from market_trader.collectors.prices import PriceCollector
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] or list(
+        resolve_universe(settings.universe)
+    )
+    end = date.today()
+    start = end - timedelta(days=args.days)
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        client = MassiveClient(
+            settings.massive_api_key,
+            base_url=settings.massive_base_url,
+            budget_seconds=float(args.budget),
+        )
+        bars = client.fetch_daily_bars(symbols, start=start, end=end)
+        observations = PriceCollector().normalize(bars)
+        IngestionGateway(store).ingest(observations)
+    except Exception as exc:
+        print(f"ingest-prices-massive failed: {exc}")
+        return 1
+    print(f"ingest-prices-massive: {len(bars)} bars -> {len(observations)} observations ingested")
+    return 0
+
+
 def cmd_build_universe(args: argparse.Namespace) -> int:
     """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
 
@@ -1116,6 +1160,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbols", default="", help="comma-separated tickers instead of the universe"
     )
     ingest_llm.set_defaults(func=cmd_ingest_llm_signals)
+
+    ingest_px = sub.add_parser(
+        "ingest-prices-massive",
+        help="backfill cleaner EOD prices from Massive (grouped-daily, free tier)",
+    )
+    ingest_px.add_argument("--days", type=int, default=365, help="history window in days")
+    ingest_px.add_argument(
+        "--budget", type=float, default=600.0, help="wall-clock fetch budget (seconds)"
+    )
+    ingest_px.add_argument(
+        "--symbols", default="", help="comma-separated tickers instead of the universe"
+    )
+    ingest_px.set_defaults(func=cmd_ingest_prices_massive)
 
     build_universe = sub.add_parser(
         "build-universe",
