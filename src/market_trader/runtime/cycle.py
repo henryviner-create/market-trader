@@ -26,7 +26,7 @@ from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
 from market_trader.features.news import news_features
 from market_trader.observability import get_logger
-from market_trader.portfolio import RiskLimits, apply_risk_limits
+from market_trader.portfolio import RiskLimits, apply_risk_limits, size_book
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
 from market_trader.runtime.learning import grade_predictions, log_cycle_predictions
 from market_trader.runtime.scoring import ScoreFn, build_scorer, composite_scorer
@@ -192,6 +192,7 @@ def run_paper_cycle(
     max_positions: int | None = None,
     exit_band_multiple: float = 1.0,
     risk_weighting: str = "equal",
+    tilt_strength: float = 0.0,
     prediction_log: bool = False,
     model_version: str = "composite",
     prediction_horizon: int = 5,
@@ -241,7 +242,23 @@ def run_paper_cycle(
     if stopped:
         _log.info("stop_loss", names=sorted(stopped))
     target: dict[str, float] = {}
-    if not ranked.empty:
+    if not ranked.empty and risk_weighting == "size_book":
+        # The unified chassis (size_book): hold the *whole* scored universe, vol-governed to
+        # the budget and tilted toward higher scores (tilt_strength=0 -> governed 1/N). The
+        # top-N selection / hysteresis do not apply here — breadth is the point. size_book
+        # applies the hard caps itself, so its output is already the risk-managed target.
+        eligible = [s for s in ranked.index if s not in stopped and s not in reserved_symbols]
+        returns = _trailing_returns(store, as_of, eligible)
+        if returns is not None and not returns.empty:
+            target = size_book(
+                returns,
+                target_vol=settings.target_vol,
+                limits=limits,
+                scores=ranked if tilt_strength > 0 else None,
+                tilt_strength=tilt_strength,
+                lookback=_VOL_LOOKBACK,
+            )
+    elif not ranked.empty:
         enter_k = max(1, int(len(ranked) * top_quantile))
         if max_positions is not None:
             enter_k = min(enter_k, max_positions)  # cap breadth into a diversified book
@@ -432,6 +449,7 @@ def run_live_paper_cycle(
         max_positions=settings.max_positions or None,  # 0 -> uncapped
         exit_band_multiple=settings.exit_band_multiple,
         risk_weighting=settings.risk_weighting,
+        tilt_strength=settings.tilt_strength,
         prediction_log=True,
         model_version=settings.scorer,
         stop_loss_pct=settings.stop_loss_pct,

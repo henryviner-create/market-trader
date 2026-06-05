@@ -92,9 +92,16 @@ class Settings(BaseSettings):
     # leaves the top (entry_count * multiple) — so the book holds winners instead
     # of churning on rank noise (your "it sells too quickly"). risk_weighting:
     # "inverse_vol" sizes each name to ~equal risk; "equal" splits evenly;
-    # "conviction" bets more on the strongest signals (aggressive offense).
+    # "conviction" bets more on the strongest signals (aggressive offense);
+    # "size_book" is the unified chassis (see tilt_strength below).
     exit_band_multiple: float = 2.0
     risk_weighting: str = "inverse_vol"
+    # The unified chassis (portfolio.sizing.size_book). When risk_weighting="size_book"
+    # the cycle ignores top-N selection and holds the *whole* scored universe, vol-governed
+    # to target_vol and tilted toward higher scores by tilt_strength. tilt_strength=0 is
+    # governed equal-weight (1/N) — the validated, mandate-compliant book we deploy first;
+    # a signal that later earns its place out-of-sample gets a small positive tilt here.
+    tilt_strength: float = 0.0
     # Per-name hard stop: flatten a holding once it is this far below its entry
     # price, regardless of how good its signal still looks — the trader's "cut
     # your losers" rail. 0 = off. Complements (does not replace) the rank
