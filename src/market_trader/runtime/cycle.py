@@ -134,6 +134,48 @@ def _risk_weights(
     return {s: 1.0 / n for s in selected}
 
 
+_VOL_LOOKBACK = 90  # trailing trading days for the covariance estimate
+
+
+def _trailing_returns(
+    store: BitemporalStore, as_of: datetime, symbols: list[str], *, lookback: int = _VOL_LOOKBACK
+) -> pd.DataFrame | None:
+    """Point-in-time trailing daily returns for ``symbols`` (knowledge_time <= as_of)."""
+    from market_trader.backtest.pit import observations_to_price_frame
+
+    panel = observations_to_price_frame(store.as_of(as_of, dataset=PRICE_DATASET))
+    if panel.empty:
+        return None
+    cols = [s for s in symbols if s in panel.columns]
+    if not cols:
+        return None
+    return panel[cols].pct_change().iloc[1:].tail(lookback)
+
+
+def _vol_target_weights(
+    weights: dict[str, float], returns: pd.DataFrame, *, target_vol: float, max_gross: float
+) -> dict[str, float]:
+    """Scale a long-only book to ``target_vol`` annualised, capped at ``max_gross``.
+
+    This is the drawdown governor the backtest validated to ~-19% max-DD: cut exposure
+    (into cash) as volatility rises. Too little return history is a no-op — the input book
+    is returned unscaled so the cycle degrades gracefully on a fresh deployment.
+    """
+    from market_trader.portfolio.construction import ledoit_wolf_cov, volatility_target_weights
+
+    names = [s for s in weights if s in returns.columns]
+    window = returns[names].dropna(axis=1, how="any")
+    if window.shape[1] < 2 or window.shape[0] < 20:
+        return weights
+    cov = ledoit_wolf_cov(window)
+    w = pd.Series(weights).reindex(cov.columns).fillna(0.0)
+    scaled = volatility_target_weights(w, cov, target_vol)
+    gross = float(scaled.abs().sum())
+    if gross > max_gross and gross > 0:
+        scaled = scaled * (max_gross / gross)
+    return {str(k): float(v) for k, v in scaled.items() if abs(float(v)) > 1e-9}
+
+
 def run_paper_cycle(
     store: BitemporalStore,
     *,
@@ -206,7 +248,25 @@ def run_paper_cycle(
         exit_k = min(len(ranked), max(enter_k, round(enter_k * exit_band_multiple)))
         winners = _select_with_hysteresis(ranked, held, enter_k, exit_k, max_positions)
         winners = [w for w in winners if w not in stopped and w not in reserved_symbols]
-        target = apply_risk_limits(_risk_weights(winners, matrix, risk_weighting, ranked), limits)
+        if risk_weighting == "vol_target":
+            # The validated drawdown governor: an equal-risk base book scaled to the
+            # vol budget (holding cash as vol rises), then the hard caps. Falls back to
+            # the base book when there isn't yet enough price history to estimate cov.
+            base = _risk_weights(winners, matrix, "inverse_vol", ranked)
+            returns = _trailing_returns(store, as_of, winners)
+            weights = (
+                base
+                if returns is None
+                else _vol_target_weights(
+                    base,
+                    returns,
+                    target_vol=settings.target_vol,
+                    max_gross=limits.max_gross_exposure,
+                )
+            )
+        else:
+            weights = _risk_weights(winners, matrix, risk_weighting, ranked)
+        target = apply_risk_limits(weights, limits)
 
     # Flatten holdings that left the selection: the engine only acts on symbols in
     # the target, so a dropped name needs an explicit 0 (with a price) or it would
