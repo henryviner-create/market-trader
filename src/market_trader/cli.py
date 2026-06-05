@@ -555,9 +555,11 @@ def cmd_simulate(args: argparse.Namespace) -> int:
             name="insider_long@vol",
         )
         il_result = run_backtest(store, insider_long, schedule, universe=universe)
-        # The combination layer: trade the multi-signal mega-alpha, vol-governed.
+        # The combination layer: trade the multi-signal mega-alpha, vol-governed. Hold a
+        # *broad* slice (top half of the universe by combined score) — breadth is half the
+        # Fundamental Law, so a 20-name book throws away diversification vs equal-weight.
         stacked = VolTargetedStrategy(
-            StackedSignalStrategy(stacked_scores, max_positions=max_pos),
+            StackedSignalStrategy(stacked_scores, max_positions=max(30, len(universe) // 2)),
             target_vol=settings.target_vol,
             name="stacked@vol",
         )
