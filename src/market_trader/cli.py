@@ -929,6 +929,86 @@ def cmd_ingest_prices_massive(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_prices_stooq(args: argparse.Namespace) -> int:
+    """Backfill deep daily history from Stooq (free, no key) — for survivorship-aware replay.
+
+    Stooq retains delisted names and offers decades of free history, so it's the cold-start
+    source for an honest, multi-year training set. Per-symbol + budget-bounded; prices land in
+    the same price.ohlcv dataset (identical point-in-time machinery as every other source).
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from datetime import date, timedelta
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.prices import PriceCollector
+    from market_trader.collectors.stooq import StooqClient
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+    from market_trader.universe.liquid import resolve_universe
+
+    symbols = [s.strip().upper() for s in args.symbols.split(",") if s.strip()] or list(
+        resolve_universe(settings.universe)
+    )
+    end = date.today()
+    start = end - timedelta(days=args.days)
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        client = StooqClient(budget_seconds=float(args.budget))
+        bars = client.fetch_daily_bars(symbols, start=start, end=end)
+        observations = PriceCollector().normalize(bars)
+        IngestionGateway(store).ingest(observations)
+    except Exception as exc:
+        print(f"ingest-prices-stooq failed: {exc}")
+        return 1
+    print(f"ingest-prices-stooq: {len(bars)} bars -> {len(observations)} observations ingested")
+    return 0
+
+
+def cmd_insider_events(args: argparse.Namespace) -> int:
+    """Preview the gated insider-cluster event sleeve: what it would open now (read-only).
+
+    Runs the event-study gate, then shows the fresh insider clusters the sleeve would open as
+    time-boxed positions. Trades nothing — it's visibility into the (gate-validated) reactive
+    sleeve before the live execution loop is armed.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.core.time import utcnow
+    from market_trader.memory.study_runner import significant_event_types
+    from market_trader.runtime.insider_events import INSIDER_CLUSTER, insider_cluster_entries
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        gate = significant_event_types(store, post_days=args.post)
+        entries = insider_cluster_entries(
+            store, utcnow(), gate=gate, hold_days=args.hold, max_names=args.max_names
+        )
+    except Exception as exc:
+        print(f"insider-events failed: {exc}")
+        return 1
+
+    dist = gate.get(INSIDER_CLUSTER)
+    if dist is None:
+        print("insider-events: insider_cluster_buy has NOT cleared the event-study gate -> flat")
+        return 0
+    print(
+        f"insider-events [gate PASSED: CAR={dist.mean_car:+.2%}  t={dist.t_stat:+.2f}  n={dist.n}]"
+    )
+    if not entries:
+        print("  no fresh insider clusters to open right now")
+        return 0
+    for e in entries:
+        print(
+            f"  OPEN {e.symbol:8} n_buys={e.n_buys}  knowable={e.knowledge_time.date()}  "
+            f"exit_by={e.exit_by.date()}  expected_drift={e.expected_car:+.1%}"
+        )
+    return 0
+
+
 def cmd_build_universe(args: argparse.Namespace) -> int:
     """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
 
@@ -1302,12 +1382,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest_px.set_defaults(func=cmd_ingest_prices_massive)
 
+    ingest_stooq = sub.add_parser(
+        "ingest-prices-stooq",
+        help="backfill deep daily history from Stooq (free, no key) for survivorship-aware replay",
+    )
+    ingest_stooq.add_argument("--days", type=int, default=2555, help="history window in days")
+    ingest_stooq.add_argument(
+        "--budget", type=float, default=600.0, help="wall-clock fetch budget (seconds)"
+    )
+    ingest_stooq.add_argument(
+        "--symbols", default="", help="comma-separated tickers instead of the universe"
+    )
+    ingest_stooq.set_defaults(func=cmd_ingest_prices_stooq)
+
     event_study = sub.add_parser(
         "event-study", help="measure post-event drift (CAR + t-stat) — the reactive-sleeve gate"
     )
     event_study.add_argument("--step", type=int, default=5, help="days between detection scans")
     event_study.add_argument("--post", type=int, default=5, help="trading days of drift to measure")
     event_study.set_defaults(func=cmd_event_study)
+
+    insider_events = sub.add_parser(
+        "insider-events", help="preview the gated insider-cluster event sleeve (read-only)"
+    )
+    insider_events.add_argument("--post", type=int, default=5, help="drift window for the gate")
+    insider_events.add_argument(
+        "--hold", type=int, default=5, help="time-box hold days per position"
+    )
+    insider_events.add_argument("--max-names", type=int, default=5, dest="max_names")
+    insider_events.set_defaults(func=cmd_insider_events)
 
     build_universe = sub.add_parser(
         "build-universe",
