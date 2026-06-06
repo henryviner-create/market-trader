@@ -496,21 +496,27 @@ def run_live_paper_cycle(
         _log.info("ic_weighting", signals=len(ic), ic={k: round(v, 4) for k, v in ic.items()})
     score_fn = build_scorer(settings, store, fs, watchlist, as_of, ic=ic)
 
-    # If the news sleeve is on, reserve the names it owns (the daily book leaves
-    # them alone) and shrink the daily book's gross by the sleeve's budget so the
-    # two together stay within the exposure cap.
+    # If a sleeve is on, reserve the names it owns (the daily book leaves them alone) and
+    # shrink the daily book's gross by the reserved budget so the book + sleeve(s) together
+    # stay within the exposure cap. Budgets are additive across sleeves.
     reserved: frozenset[str] = frozenset()
     limits: RiskLimits | None = None
+    sleeve_budget = 0.0
     if settings.news_sleeve_enabled:
         from market_trader.runtime.news_sleeve import active_sleeve_positions
 
-        reserved = frozenset(active_sleeve_positions(store, as_of))
-        base = _limits_from_settings(settings)
-        limits = replace(
-            base, max_gross_exposure=base.max_gross_exposure * (1 - settings.news_sleeve_budget)
-        )
+        reserved |= frozenset(active_sleeve_positions(store, as_of))
+        sleeve_budget += settings.news_sleeve_budget
+    if settings.insider_sleeve_enabled:
+        from market_trader.runtime.insider_sleeve import active_insider_positions
 
-    return run_paper_cycle(
+        reserved |= frozenset(active_insider_positions(store, as_of))
+        sleeve_budget += settings.insider_sleeve_budget
+    if sleeve_budget > 0:
+        base = _limits_from_settings(settings)
+        limits = replace(base, max_gross_exposure=base.max_gross_exposure * (1 - sleeve_budget))
+
+    result = run_paper_cycle(
         store,
         as_of=as_of,
         symbols=watchlist,
@@ -534,3 +540,15 @@ def run_live_paper_cycle(
         reserved_symbols=reserved,
         cancel_stale_orders=True,  # clear a prior run's unfilled orders first
     )
+
+    # Run the insider-cluster sleeve on the same fresh store/broker right after the daily
+    # book. It manages only its own names (a direct rebalance), so the book is undisturbed;
+    # a sleeve error never fails the daily cycle — the daily book has already executed.
+    if settings.insider_sleeve_enabled:
+        from market_trader.runtime.insider_sleeve import run_insider_sleeve_cycle
+
+        try:
+            run_insider_sleeve_cycle(settings, store=store, broker=broker, as_of=as_of)
+        except Exception as exc:
+            _log.warning("insider_sleeve_error", error=str(exc))
+    return result

@@ -224,6 +224,17 @@ class Settings(BaseSettings):
     news_sleeve_tone_min: float = 1.5  # min |mean tone| to assign a direction
     news_sleeve_baseline_days: int = 14  # trailing window for the count baseline
 
+    # --- Insider-cluster event sleeve (PAPER; OFF by default) ------------
+    # The reactive overlay that trades the validated insider_cluster_buy drift (event study:
+    # CAR ~+3%, t~4). When enabled in `serve`, it opens small, time-boxed positions on fresh,
+    # gated insider clusters and exits at horizon — but only while that event type clears the
+    # event-study gate, so the edge has to stay significant for the sleeve to keep trading. It
+    # coexists with the daily book on its own reserved budget, exactly like the news sleeve.
+    insider_sleeve_enabled: bool = False
+    insider_sleeve_budget: float = 0.10  # fraction of gross reserved for the sleeve
+    insider_sleeve_max_names: int = 5  # cap on concurrent sleeve positions
+    insider_sleeve_hold_days: int = 5  # time-boxed drift window before exit
+
     # --- Reasoning / LLM (hosted Anthropic API in production; see DECISIONS D12) ---
     # Claude Code is a dev-time tool; the deployed engine calls the hosted API
     # itself, on schedule. The key is a managed, rotatable secret — never committed.

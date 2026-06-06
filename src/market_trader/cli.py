@@ -203,6 +203,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         intraday=settings.intraday_enabled,
         daily_cycle=settings.daily_cycle_enabled,
         news_sleeve=settings.news_sleeve_enabled,
+        insider_sleeve=settings.insider_sleeve_enabled,
         port=args.port,
     )
     server.serve_forever()
@@ -1009,6 +1010,35 @@ def cmd_insider_events(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_insider_sleeve(_: argparse.Namespace) -> int:
+    """Run one LIVE insider-cluster sleeve pass on Alpaca paper (the executing counterpart).
+
+    Where ``insider-events`` only previews, this ingests fresh prices + Form-4 filings, applies
+    the event-study gate, and actually opens/closes the sleeve's time-boxed positions through
+    the risk-gated ExecutionEngine. Paper-gated; trades only if the event type cleared the gate
+    this run. The daily cycle runs the sleeve automatically when MT_INSIDER_SLEEVE_ENABLED=true
+    — this is the manual/cron trigger for it.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from market_trader.runtime.insider_sleeve import run_insider_sleeve_live_pass
+
+    try:
+        result = run_insider_sleeve_live_pass(settings)
+    except Exception as exc:
+        print(f"insider-sleeve failed: {exc}")
+        return 1
+
+    print(
+        f"insider-sleeve [as_of={result.as_of.date()}]  opened={result.opened or '-'}  "
+        f"closed={result.closed or '-'}  orders={len(result.orders)}"
+    )
+    for o in result.orders:
+        print(f"  {o.side.value:4} {o.symbol:8} qty={o.qty:g}  status={o.status.value}")
+    return 0
+
+
 def cmd_build_universe(args: argparse.Namespace) -> int:
     """Screen Alpaca-tradable SEC filers by liquidity into a small/mid-cap universe.
 
@@ -1411,6 +1441,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     insider_events.add_argument("--max-names", type=int, default=5, dest="max_names")
     insider_events.set_defaults(func=cmd_insider_events)
+
+    sub.add_parser(
+        "insider-sleeve",
+        help="run one LIVE insider-cluster sleeve pass on Alpaca paper (executes; gate-gated)",
+    ).set_defaults(func=cmd_insider_sleeve)
 
     build_universe = sub.add_parser(
         "build-universe",
