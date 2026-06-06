@@ -967,6 +967,48 @@ def cmd_ingest_prices_stooq(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_ingest_prices_csv(args: argparse.Namespace) -> int:
+    """Ingest daily prices from LOCAL CSV files (Stooq per-symbol d/l or bulk DB).
+
+    The offline path for when the source IP-blocks this box: Stooq serves a bot challenge to
+    datacenter IPs, so `ingest-prices-stooq` returns 0 bars from a cloud droplet. Download the
+    CSVs where the source IS reachable (a browser/your laptop), copy them over, and point
+    --path at the file or directory. Symbols come from each row (bulk DB) or the filename /
+    --symbol (per-symbol d/l). Prices land in the same price.ohlcv dataset (identical
+    point-in-time machinery as every other source), so replay/backtest read them unchanged.
+    """
+    settings = get_settings()
+    configure_logging(settings.log_level, json_logs=settings.json_logs)
+
+    from pathlib import Path
+
+    from market_trader.collectors import IngestionGateway
+    from market_trader.collectors.csv_prices import iter_price_files, read_price_files
+    from market_trader.collectors.prices import PriceCollector
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+
+    target = Path(args.path)
+    if not target.exists():
+        print(f"ingest-prices-csv: path not found: {target}")
+        return 1
+    try:
+        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        store.create_schema()
+        files = iter_price_files(target)
+        bars = read_price_files(files, symbol=args.symbol)
+        observations = PriceCollector().normalize(bars)
+        IngestionGateway(store).ingest(observations)
+    except Exception as exc:
+        print(f"ingest-prices-csv failed: {exc}")
+        return 1
+    syms = len({b.symbol for b in bars})
+    print(
+        f"ingest-prices-csv: {len(bars)} bars across {syms} symbols from {len(files)} file(s) "
+        f"-> {len(observations)} observations ingested"
+    )
+    return 0
+
+
 def cmd_insider_events(args: argparse.Namespace) -> int:
     """Preview the gated insider-cluster event sleeve: what it would open now (read-only).
 
@@ -1424,6 +1466,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--symbols", default="", help="comma-separated tickers instead of the universe"
     )
     ingest_stooq.set_defaults(func=cmd_ingest_prices_stooq)
+
+    ingest_csv = sub.add_parser(
+        "ingest-prices-csv",
+        help="ingest daily prices from LOCAL CSV files (Stooq d/l or bulk DB) — bypasses IP blocks",
+    )
+    ingest_csv.add_argument("--path", required=True, help="a CSV/TXT file or a directory of them")
+    ingest_csv.add_argument(
+        "--symbol",
+        default=None,
+        help="symbol for a single per-symbol file (else inferred from the filename)",
+    )
+    ingest_csv.set_defaults(func=cmd_ingest_prices_csv)
 
     event_study = sub.add_parser(
         "event-study", help="measure post-event drift (CAR + t-stat) — the reactive-sleeve gate"
