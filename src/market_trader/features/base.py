@@ -58,13 +58,13 @@ def default_features() -> list[Feature]:
     live sizing.
     """
     from market_trader.features.flow import CongressLeadershipBuys, InsiderNetBuys
-    from market_trader.features.technical import MeanReversion, Momentum, Volatility
+    from market_trader.features.technical import Momentum, Volatility
 
     return [
+        Momentum(lookback=252, skip=21),  # 12-1 momentum: strongest OOS signal (signal-ic t=4.0)
         Momentum(lookback=60),
-        MeanReversion(lookback=5),
         Volatility(window=20),
-        InsiderNetBuys(window_days=90, opportunistic_only=True),  # opportunistic > raw (CMP 2012)
+        InsiderNetBuys(window_days=90, opportunistic_only=True),  # validated OOS t=3.4; CMP 2012
         CongressLeadershipBuys(window_days=120),
     ]
 
@@ -73,21 +73,20 @@ def candidate_features() -> list[Feature]:
     """``default_features`` plus signals under evaluation, for ``signal-ic`` to measure.
 
     A candidate must show a positive, significant out-of-sample IC here before it is
-    promoted into ``default_features`` (the live scorer) — the "earn its place" gate.
-    Most factor candidates (value, PEAD, low-vol, 12-1 momentum) are weak-to-reversed on
-    a mega-cap universe (they live in small/mid-caps), so they stay parked here; the raw
-    insider signal is kept alongside the promoted opportunistic one to keep tracking the
-    comparison.
+    promoted into ``default_features`` (the live scorer) — the "earn its place" gate. On the
+    small/mid-cap universe 12-1 momentum and opportunistic insider cleared it (t≈4 and t≈3.4)
+    and have been promoted; value (earnings yield/surprise) and low-vol remain weak and stay
+    parked. The raw insider signal is kept alongside the promoted opportunistic one to track
+    the comparison.
     """
     from market_trader.features.flow import InsiderNetBuys
     from market_trader.features.fundamental import EarningsSurprise, EarningsYield
     from market_trader.features.llm import LLMNewsSentiment
-    from market_trader.features.technical import Momentum, Volatility
+    from market_trader.features.technical import Volatility
 
     return [
         *default_features(),
         InsiderNetBuys(window_days=90),  # raw, tracked against the promoted opportunistic variant
-        Momentum(lookback=252, skip=21),
         Volatility(window=120, low_vol=True),
         EarningsYield(),
         EarningsSurprise(),
