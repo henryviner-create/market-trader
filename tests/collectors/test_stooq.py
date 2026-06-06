@@ -8,6 +8,7 @@ yfinance bars use. An injected no-op ``sleep`` keeps the rate-limited sweep inst
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import date
 
 from market_trader.collectors import PriceCollector
@@ -28,7 +29,7 @@ _HEADER_ONLY_CSV = "Date,Open,High,Low,Close,Volume\n"
 _BODIES = {"aapl": _AAPL_CSV, "msft": _MSFT_CSV}
 
 
-def _transport(bodies: dict[str, str] | None = None) -> tuple[object, list[str]]:
+def _transport(bodies: dict[str, str] | None = None) -> tuple[Callable[[str], str], list[str]]:
     """Stub transport: route on the lowercased ticker in the URL, recording calls."""
     table = _BODIES if bodies is None else bodies
     calls: list[str] = []
@@ -43,7 +44,7 @@ def _transport(bodies: dict[str, str] | None = None) -> tuple[object, list[str]]
     return transport, calls
 
 
-def _no_sleep() -> tuple[object, list[float]]:
+def _no_sleep() -> tuple[Callable[[float], None], list[float]]:
     slept: list[float] = []
     return (lambda secs: slept.append(secs)), slept
 
