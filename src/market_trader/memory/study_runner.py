@@ -147,8 +147,8 @@ def significant_event_types(
     step_days: int = 5,
     post_days: int = 5,
     alpha: float = 0.05,
-    n_permutations: int = 200,
-    lookback_days: int | None = 1095,
+    n_permutations: int = 100,
+    lookback_days: int | None = 504,
     seed: int = 0,
 ) -> dict[str, EventOutcomeDistribution]:
     """Event types whose post-event drift beats a permutation null — the tradeable set.
