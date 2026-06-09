@@ -865,10 +865,18 @@ def cmd_event_study(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
+    from market_trader.core.time import DISTANT_FUTURE
+    from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
 
     try:
-        store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        db = SqlAlchemyBitemporalStore.from_url(settings.database_url)
+        db.create_schema()
+        # Load the store into memory ONCE: event detection runs at every step across the whole
+        # price history, so re-querying the DB per scan turns seconds into minutes on a real
+        # store. The in-memory copy makes the sweep (and the price-panel build) cheap.
+        store = InMemoryBitemporalStore()
+        store.add_many(db.as_of(DISTANT_FUTURE))
         if args.placebo > 0:
             from market_trader.memory.study_runner import run_event_study_with_placebo
 
@@ -1591,7 +1599,12 @@ def build_parser() -> argparse.ArgumentParser:
         "signal-ic", help="measure each signal's out-of-sample IC over history"
     )
     signal_ic.add_argument("--horizon", type=int, default=5, help="forward-return horizon (days)")
-    signal_ic.add_argument("--dates", type=int, default=120, help="max decision dates to sample")
+    signal_ic.add_argument(
+        "--dates",
+        type=int,
+        default=60,
+        help="max decision dates to sample (each recomputes the full candidate set — keep modest)",
+    )
     signal_ic.add_argument(
         "--every",
         type=int,
