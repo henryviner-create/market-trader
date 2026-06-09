@@ -65,18 +65,23 @@ def measure_signal_ic(
     warmup: int = 60,
     max_dates: int = 120,
     min_names: int = 5,
+    since: datetime | None = None,
 ) -> dict[str, SignalIC]:
     """Per-signal cross-sectional rank IC vs forward returns, averaged over dates.
 
     Returns a mapping ``signal -> SignalIC``; signals with no usable variation on a
     date are skipped that date, and signals with no usable dates are omitted. Note: if
     ``every < horizon_days`` the forward windows overlap, which inflates the t-stat —
-    sample at ``every >= horizon_days`` for independent (honest) significance.
+    sample at ``every >= horizon_days`` for independent (honest) significance. ``since``
+    restricts the sampled decision dates to a tail window — used to measure on a sealed
+    holdout slice without touching the earlier research data.
     """
     panel = observations_to_price_frame(store.as_of(as_of, dataset=PRICE_DATASET))
     if panel.empty:
         return {}
     dates = [d.to_pydatetime() for d in pd.DatetimeIndex(panel.index)][warmup::every][-max_dates:]
+    if since is not None:
+        dates = [d for d in dates if d >= since]
     syms = list(symbols)
     per_date: dict[str, list[float]] = defaultdict(list)
     n_obs: dict[str, int] = defaultdict(int)
