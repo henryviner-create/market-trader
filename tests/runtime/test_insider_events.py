@@ -52,13 +52,14 @@ def test_opens_a_fresh_gated_insider_cluster() -> None:
     assert e.expected_car == SIGNIFICANT.mean_car  # carries the gate's measured drift
 
 
-def test_flat_until_the_event_type_clears_the_gate() -> None:
+def test_flat_unless_a_positive_drift_type_is_gated() -> None:
     store = _cluster_store(("ABC", _recent(1, 2, 3)))
-    assert insider_cluster_entries(store, AS_OF, gate={}) == []  # not gated at all
-    not_significant = EventOutcomeDistribution(
-        "insider_cluster_buy", 5, 0.01, 0.2, 0.5, 0.5, 0, 0, 0
-    )
-    assert insider_cluster_entries(store, AS_OF, gate={INSIDER_CLUSTER: not_significant}) == []
+    assert insider_cluster_entries(store, AS_OF, gate={}) == []  # type not in the gate -> flat
+    # `gate` is the (placebo-gated) tradeable set; insider_cluster_entries trusts membership now
+    # rather than re-judging significance — but still refuses a non-positive-drift type, since
+    # the sleeve is long-only.
+    negative = EventOutcomeDistribution("insider_cluster_buy", 9, -0.01, 0.2, -2.5, 0.4, 0, 0, 0)
+    assert insider_cluster_entries(store, AS_OF, gate={INSIDER_CLUSTER: negative}) == []
 
 
 def test_skips_a_stale_cluster_whose_drift_already_passed() -> None:

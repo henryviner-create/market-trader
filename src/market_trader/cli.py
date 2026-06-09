@@ -1064,10 +1064,13 @@ def cmd_insider_events(args: argparse.Namespace) -> int:
 
     dist = gate.get(INSIDER_CLUSTER)
     if dist is None:
-        print("insider-events: insider_cluster_buy has NOT cleared the event-study gate -> flat")
+        print("insider-events: insider_cluster_buy did NOT beat the permutation null -> flat")
         return 0
+    # The gate is the placebo/permutation test now, not the i.i.d. t-stat (which is shown only
+    # for context — it can sit below 1.96 while the permutation null still clears the edge).
     print(
-        f"insider-events [gate PASSED: CAR={dist.mean_car:+.2%}  t={dist.t_stat:+.2f}  n={dist.n}]"
+        f"insider-events [PLACEBO-GATED: CAR={dist.mean_car:+.2%}  n={dist.n}  "
+        f"(naive t={dist.t_stat:+.2f}, context only)]"
     )
     if not entries:
         print("  no fresh insider clusters to open right now")

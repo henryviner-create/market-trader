@@ -57,9 +57,12 @@ def insider_cluster_entries(
     last ``freshness_days`` (the post-event drift hasn't elapsed yet), are not already
     ``held``, newest first, capped at ``max_names``. Each entry exits after ``hold_days``.
     """
+    # Membership in `gate` IS the significance verdict now (it's the placebo-gated tradeable
+    # set from significant_event_types) — so trust it rather than re-applying the naive t-stat,
+    # which was the test that wrongly rejected this very edge at t=1.92.
     dist = gate.get(INSIDER_CLUSTER)
-    if dist is None or not dist.significant() or dist.mean_car <= 0:
-        return []  # the event type has not earned its place -> the sleeve does not trade it
+    if dist is None or dist.mean_car <= 0:
+        return []  # not in the placebo-gated tradeable set -> the sleeve stays flat
 
     events = detect_events(
         store,
