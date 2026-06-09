@@ -170,9 +170,14 @@ class SqlAlchemyBitemporalStore:
         entity_type: str | None = None,
         entity_id: str | None = None,
         latest_revision_only: bool = True,
+        since: datetime | None = None,
     ) -> list[Observation]:
         k = naive_utc(ensure_utc(knowledge_time))
         stmt = select(ObservationRow).where(ObservationRow.knowledge_time <= k)
+        if since is not None:
+            # Event-time floor: load only recent history so a deep backfill doesn't force a
+            # full-table deserialization for a diagnostic that only needs the last year or two.
+            stmt = stmt.where(ObservationRow.event_time >= naive_utc(ensure_utc(since)))
         if source is not None:
             stmt = stmt.where(ObservationRow.source == source)
         if dataset is not None:

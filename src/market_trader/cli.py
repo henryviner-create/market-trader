@@ -865,18 +865,20 @@ def cmd_event_study(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
-    from market_trader.core.time import DISTANT_FUTURE
+    from datetime import timedelta
+
+    from market_trader.core.time import DISTANT_FUTURE, utcnow
     from market_trader.storage import InMemoryBitemporalStore
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
 
     try:
         db = SqlAlchemyBitemporalStore.from_url(settings.database_url)
         db.create_schema()
-        # Load the store into memory ONCE: event detection runs at every step across the whole
-        # price history, so re-querying the DB per scan turns seconds into minutes on a real
-        # store. The in-memory copy makes the sweep (and the price-panel build) cheap.
+        # Load ONLY a bounded recent window into memory, then run detection over it. A deep
+        # backfill (5y x 250 names ~= 300k rows) otherwise forces a full-table deserialization
+        # AND an O(steps x rows) sweep over all of it — minutes-to-hung on the live box.
         store = InMemoryBitemporalStore()
-        store.add_many(db.as_of(DISTANT_FUTURE))
+        store.add_many(db.as_of(DISTANT_FUTURE, since=utcnow() - timedelta(days=args.lookback)))
         if args.placebo > 0:
             from market_trader.memory.study_runner import run_event_study_with_placebo
 
@@ -1194,6 +1196,8 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
+    from datetime import timedelta
+
     from market_trader.backtest.holdout import HoldoutLook, confirm_on_holdout, holdout_start
     from market_trader.backtest.multiple_testing import correct_family
     from market_trader.core.time import DISTANT_FUTURE, utcnow
@@ -1206,12 +1210,13 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
     try:
         db = SqlAlchemyBitemporalStore.from_url(settings.database_url)
         db.create_schema()
-        # Load the store into memory ONCE so the per-date flow-feature lookups (and the
-        # one-time price-panel build) don't re-query the DB at every sampled date.
-        store = InMemoryBitemporalStore()
-        store.add_many(db.as_of(DISTANT_FUTURE))
+        # Load ONLY a bounded recent window into memory: a deep backfill (5y x 250 names is
+        # ~300k rows) otherwise forces a full-table deserialization that thrashes the box for
+        # a diagnostic that only needs the last couple of years.
         now = utcnow()
-        since = holdout_start(store, now, frac=args.holdout_frac) if args.holdout else None
+        store = InMemoryBitemporalStore()
+        store.add_many(db.as_of(DISTANT_FUTURE, since=now - timedelta(days=args.lookback)))
+        holdout_since = holdout_start(store, now, frac=args.holdout_frac) if args.holdout else None
         ics = measure_signal_ic(
             store,
             candidate_features(),
@@ -1220,7 +1225,7 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
             horizon_days=args.horizon,
             every=args.every,
             max_dates=args.dates,
-            since=since,
+            since=holdout_since,
         )
     except Exception as exc:
         print(f"signal-ic failed: {exc}")
@@ -1561,6 +1566,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="N",
         help="also run an N-permutation random-anchoring null (0=off); catches an inflated t-stat",
     )
+    event_study.add_argument(
+        "--lookback",
+        type=int,
+        default=1095,
+        metavar="DAYS",
+        help="only study the last DAYS of history (keeps a deep backfill from choking the load)",
+    )
     event_study.set_defaults(func=cmd_event_study)
 
     insider_events = sub.add_parser(
@@ -1625,6 +1637,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0.2,
         dest="holdout_frac",
         help="fraction of the most-recent history sealed as the holdout",
+    )
+    signal_ic.add_argument(
+        "--lookback",
+        type=int,
+        default=1095,
+        metavar="DAYS",
+        help="only load the last DAYS of history (keeps a deep backfill from choking the load)",
     )
     signal_ic.set_defaults(func=cmd_signal_ic)
 
