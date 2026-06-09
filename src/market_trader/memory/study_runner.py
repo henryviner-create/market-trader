@@ -10,7 +10,7 @@ a single order is placed.
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 
@@ -28,15 +28,23 @@ from market_trader.storage.bitemporal import BitemporalStore
 
 
 def _collect_anchors(
-    store: BitemporalStore, *, step_days: int, min_history: int
+    store: BitemporalStore, *, step_days: int, min_history: int, lookback_days: int | None = None
 ) -> tuple[dict[str, list[tuple[str, datetime]]], pd.DataFrame]:
-    """Detect deduped (entity, knowledge_time) anchors per event type, plus the returns panel."""
+    """Detect deduped (entity, knowledge_time) anchors per event type, plus the returns panel.
+
+    ``lookback_days`` bounds the *detection schedule* to recent history (the panel itself is
+    kept whole so the market-model estimation windows are intact) — so the sweep doesn't grind
+    over a five-year backfill when only recent events are wanted.
+    """
     panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=PRICE_DATASET))
     if panel.empty:
         return {}, panel
     returns = panel.pct_change().iloc[1:]
     dates = [d.to_pydatetime() for d in pd.DatetimeIndex(panel.index)]
     schedule = dates[min_history::step_days]
+    if lookback_days is not None and dates:
+        cutoff = dates[-1] - timedelta(days=lookback_days)
+        schedule = [d for d in schedule if d >= cutoff]
 
     seen: set[tuple[str, str, datetime]] = set()
     anchors_by_type: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
@@ -56,6 +64,7 @@ def run_event_study(
     step_days: int = 5,
     post_days: int = 5,
     min_history: int = 60,
+    lookback_days: int | None = None,
 ) -> list[EventOutcomeDistribution]:
     """Per-event-type post-event CAR over the store's price history, most-events-first.
 
@@ -63,7 +72,9 @@ def run_event_study(
     no price history or no events). Detection is repeated every ``step_days`` and deduped, so
     a persistent cluster counts once per fresh knowledge-time, not once per scan.
     """
-    anchors_by_type, returns = _collect_anchors(store, step_days=step_days, min_history=min_history)
+    anchors_by_type, returns = _collect_anchors(
+        store, step_days=step_days, min_history=min_history, lookback_days=lookback_days
+    )
     if returns.empty:
         return []
     studies = [
@@ -81,6 +92,7 @@ def run_event_study_with_placebo(
     min_history: int = 60,
     n_permutations: int = 200,
     seed: int = 0,
+    lookback_days: int | None = None,
 ) -> list[tuple[EventOutcomeDistribution, PlaceboResult]]:
     """As :func:`run_event_study`, plus a permutation null per type — the sharper gate.
 
@@ -88,7 +100,9 @@ def run_event_study_with_placebo(
     same names). A type can be t-significant yet FAIL the placebo, which is the tell that its
     t-stat was inflated by clustering — the guard that catches the insider-mirage class.
     """
-    anchors_by_type, returns = _collect_anchors(store, step_days=step_days, min_history=min_history)
+    anchors_by_type, returns = _collect_anchors(
+        store, step_days=step_days, min_history=min_history, lookback_days=lookback_days
+    )
     if returns.empty:
         return []
     paired = [
@@ -111,18 +125,32 @@ def run_event_study_with_placebo(
 def significant_event_types(
     store: BitemporalStore,
     *,
-    threshold: float = 1.96,
     step_days: int = 5,
     post_days: int = 5,
+    alpha: float = 0.05,
+    n_permutations: int = 200,
+    lookback_days: int | None = 1095,
+    seed: int = 0,
 ) -> dict[str, EventOutcomeDistribution]:
-    """Event types whose post-event drift is significant *and positive* — the tradeable set.
+    """Event types whose post-event drift beats a permutation null — the tradeable set.
 
-    The gate for the event sleeve: it may open a (long-drift) position only for an event type
-    returned here, so the sleeve trades on measured edge rather than on every detected event.
-    Empty until there is enough history and enough events to clear the t-stat ``threshold``.
+    The gate for the event sleeve. It uses the **placebo** test, not the naive i.i.d. t-stat:
+    that t-stat is too *lenient* on a small lucky sample (the inflated insider t=4.4) and too
+    *conservative* on noisy clustered events (it rejected the same edge at t=1.92 while the
+    permutation null put it at p=0.005). The placebo asks the right question — is the mean CAR
+    more extreme than random re-anchoring of the same events — so the sleeve opens a position
+    only for an edge that survives it (and is positive-drift). Bounded to the last
+    ``lookback_days`` so the gate stays fast on a deep backfill.
     """
     return {
-        d.label: d
-        for d in run_event_study(store, step_days=step_days, post_days=post_days)
-        if d.significant(threshold) and d.mean_car > 0
+        dist.label: dist
+        for dist, plac in run_event_study_with_placebo(
+            store,
+            step_days=step_days,
+            post_days=post_days,
+            n_permutations=n_permutations,
+            lookback_days=lookback_days,
+            seed=seed,
+        )
+        if plac.significant(alpha) and dist.mean_car > 0
     }
