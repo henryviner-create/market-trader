@@ -134,6 +134,93 @@ def aggregate_event_study(
     )
 
 
+@dataclass(frozen=True)
+class PlaceboResult:
+    """A permutation test of an event type's CAR against a random-anchoring null."""
+
+    label: str
+    n_events: int
+    n_permutations: int
+    observed_mean_car: float
+    placebo_mean: float
+    placebo_std: float
+    p_value: float  # P(placebo mean CAR >= observed) — one-sided, positive-drift hypothesis
+
+    def significant(self, alpha: float = 0.05) -> bool:
+        return self.n_events > 1 and self.observed_mean_car > 0 and self.p_value <= alpha
+
+
+def placebo_event_study(
+    events: Sequence[tuple[str, datetime]],
+    returns_panel: pd.DataFrame,
+    *,
+    market_returns: pd.Series | None = None,
+    label: str = "event",
+    estimation_days: int = 60,
+    gap_days: int = 5,
+    pre: int = 0,
+    post: int = 5,
+    n_permutations: int = 200,
+    seed: int = 0,
+) -> PlaceboResult:
+    """Re-anchor the SAME events on random dates many times and ask whether the real CAR is
+    more extreme than random anchoring produces.
+
+    The i.i.d. ``mean / (std/sqrt(n))`` t-stat overstates significance when events cluster in
+    time (their CARs share common factor shocks) or when the survivor basket leaks into the
+    "market" leg — exactly the failure mode behind the insider ``t=4.4 -> noise`` flip. This
+    permutation null absorbs all of that structure: if shuffling the *same names* onto random
+    dates also yields a large mean CAR, the observed drift is not special. The p-value is
+    ``P(placebo mean CAR >= observed)`` with add-one smoothing (so it is never exactly 0).
+    """
+    observed = aggregate_event_study(
+        events,
+        returns_panel,
+        market_returns=market_returns,
+        label=label,
+        estimation_days=estimation_days,
+        gap_days=gap_days,
+        pre=pre,
+        post=post,
+    )
+    entities = [e for e, _ in events]
+    idx = returns_panel.index
+    lo, hi = estimation_days + gap_days, len(idx) - post - 1  # valid interior anchor positions
+    if observed.n < 2 or hi <= lo:
+        return PlaceboResult(label, observed.n, 0, observed.mean_car, 0.0, 0.0, 1.0)
+
+    rng = np.random.default_rng(seed)
+    placebo: list[float] = []
+    for _ in range(n_permutations):
+        fake = [(e, idx[int(rng.integers(lo, hi + 1))]) for e in entities]
+        d = aggregate_event_study(
+            fake,
+            returns_panel,
+            market_returns=market_returns,
+            label=label,
+            estimation_days=estimation_days,
+            gap_days=gap_days,
+            pre=pre,
+            post=post,
+        )
+        if d.n > 0:
+            placebo.append(d.mean_car)
+
+    arr: NDArray[np.float64] = np.array(placebo, dtype=float)
+    if arr.size == 0:
+        return PlaceboResult(label, observed.n, 0, observed.mean_car, 0.0, 0.0, 1.0)
+    p_value = float((1 + np.sum(arr >= observed.mean_car)) / (1 + arr.size))
+    return PlaceboResult(
+        label=label,
+        n_events=observed.n,
+        n_permutations=int(arr.size),
+        observed_mean_car=observed.mean_car,
+        placebo_mean=float(arr.mean()),
+        placebo_std=float(arr.std(ddof=1)) if arr.size > 1 else 0.0,
+        p_value=p_value,
+    )
+
+
 def returns_from_events(events: Sequence[tuple[str, datetime]]) -> list[str]:
     """Convenience: the distinct entities referenced by a set of events."""
     return sorted({e for e, _ in events})

@@ -17,9 +17,11 @@ from market_trader.memory.episodic import Episode, EpisodicMemory
 from market_trader.memory.event_study import (
     EventOutcomeDistribution,
     MarketModel,
+    PlaceboResult,
     aggregate_event_study,
     estimate_market_model,
     event_car,
+    placebo_event_study,
 )
 from market_trader.memory.surprise import Surprise, encode_surprise
 from market_trader.memory.taxonomy import Event, EventType, detect_events
@@ -31,10 +33,12 @@ __all__ = [
     "EventOutcomeDistribution",
     "EventType",
     "MarketModel",
+    "PlaceboResult",
     "Surprise",
     "aggregate_event_study",
     "detect_events",
     "encode_surprise",
     "estimate_market_model",
     "event_car",
+    "placebo_event_study",
 ]

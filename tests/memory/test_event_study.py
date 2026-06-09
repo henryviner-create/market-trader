@@ -9,7 +9,7 @@ import pandas as pd
 
 from market_trader.core.synthetic import business_days
 from market_trader.core.time import day_close
-from market_trader.memory import aggregate_event_study, estimate_market_model
+from market_trader.memory import aggregate_event_study, estimate_market_model, placebo_event_study
 
 
 def test_market_model_recovers_alpha_and_beta() -> None:
@@ -67,3 +67,34 @@ def test_null_events_are_not_significant() -> None:
         post=3,
     )
     assert not dist.significant()
+
+
+def test_placebo_flags_a_real_event_and_clears_a_null() -> None:
+    panel, market, anchors = _panel_with_events()
+
+    real = placebo_event_study(
+        [("EVT", a) for a in anchors],
+        panel,
+        market_returns=market,
+        label="evt",
+        estimation_days=30,
+        gap_days=3,
+        post=3,
+        n_permutations=200,
+        seed=1,
+    )
+    assert real.observed_mean_car > 0.03
+    assert real.p_value < 0.05 and real.significant()  # beats random re-anchoring
+
+    null = placebo_event_study(
+        [("CTRL", a) for a in anchors],
+        panel,
+        market_returns=market,
+        label="ctrl",
+        estimation_days=30,
+        gap_days=3,
+        post=3,
+        n_permutations=200,
+        seed=1,
+    )
+    assert not null.significant()  # random-like drift -> indistinguishable from the placebo null

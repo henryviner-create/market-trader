@@ -865,26 +865,42 @@ def cmd_event_study(args: argparse.Namespace) -> int:
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
-    from market_trader.memory.study_runner import run_event_study
     from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
 
     try:
         store = SqlAlchemyBitemporalStore.from_url(settings.database_url)
-        studies = run_event_study(store, step_days=args.step, post_days=args.post)
+        if args.placebo > 0:
+            from market_trader.memory.study_runner import run_event_study_with_placebo
+
+            paired = run_event_study_with_placebo(
+                store, step_days=args.step, post_days=args.post, n_permutations=args.placebo
+            )
+        else:
+            from market_trader.memory.study_runner import run_event_study
+
+            paired = [
+                (d, None) for d in run_event_study(store, step_days=args.step, post_days=args.post)
+            ]
     except Exception as exc:
         print(f"event-study failed: {exc}")
         return 1
 
-    print(f"event-study [{args.post}d post-event drift, knowledge-time anchored, net of nothing]")
-    if not studies:
+    suffix = f"; placebo={args.placebo} permutations" if args.placebo > 0 else ""
+    print(f"event-study [{args.post}d post-event drift, knowledge-time anchored{suffix}]")
+    if not paired:
         print("  no events detected (need insider/congress data + price history)")
         return 0
-    for d in studies:
+    for d, plac in paired:
         verdict = "SIGNIFICANT" if d.significant() else "not significant"
-        print(
+        line = (
             f"  {d.label:26} n={d.n:4d}  CAR={d.mean_car:+.2%}  t={d.t_stat:+.2f}  "
-            f"hit={d.share_positive:.0%}  [{verdict}]"
+            f"hit={d.share_positive:.0%}  [t:{verdict}]"
         )
+        if plac is not None:
+            # A type that is t-significant but FAILS the placebo had an inflated t-stat
+            # (clustering / basket leakage) — the insider-mirage tell.
+            line += f"  placebo_p={plac.p_value:.3f} [{'PASS' if plac.significant() else 'FAILS placebo'}]"
+        print(line)
     return 0
 
 
@@ -1530,6 +1546,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     event_study.add_argument("--step", type=int, default=5, help="days between detection scans")
     event_study.add_argument("--post", type=int, default=5, help="trading days of drift to measure")
+    event_study.add_argument(
+        "--placebo",
+        type=int,
+        default=0,
+        metavar="N",
+        help="also run an N-permutation random-anchoring null (0=off); catches an inflated t-stat",
+    )
     event_study.set_defaults(func=cmd_event_study)
 
     insider_events = sub.add_parser(
