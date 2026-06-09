@@ -16,7 +16,7 @@ import pandas as pd
 
 from market_trader.backtest.pit import observations_to_price_frame
 from market_trader.core.synthetic import PRICE_DATASET
-from market_trader.core.time import DISTANT_FUTURE
+from market_trader.core.time import DISTANT_FUTURE, utcnow
 from market_trader.memory.event_study import (
     EventOutcomeDistribution,
     PlaceboResult,
@@ -25,6 +25,25 @@ from market_trader.memory.event_study import (
 )
 from market_trader.memory.taxonomy import detect_events
 from market_trader.storage.bitemporal import BitemporalStore
+
+
+def _gate_store(store: BitemporalStore, lookback_days: int | None) -> BitemporalStore:
+    """A bounded in-memory copy for the (heavy) gate computation.
+
+    The gate runs the placebo over the price history; handed a SQL store with a deep backfill it
+    would deserialize the whole price table (300k+ rows) every call — minutes on the live box.
+    Load only ``lookback_days`` plus an estimation buffer into memory instead. A no-op for an
+    already in-memory store (tests / small data), so behaviour there is unchanged.
+    """
+    from market_trader.storage.sqlalchemy_store import SqlAlchemyBitemporalStore
+
+    if lookback_days is None or not isinstance(store, SqlAlchemyBitemporalStore):
+        return store
+    from market_trader.storage import InMemoryBitemporalStore
+
+    mem = InMemoryBitemporalStore()
+    mem.add_many(store.as_of(DISTANT_FUTURE, since=utcnow() - timedelta(days=lookback_days + 120)))
+    return mem
 
 
 def _collect_anchors(
@@ -145,7 +164,7 @@ def significant_event_types(
     return {
         dist.label: dist
         for dist, plac in run_event_study_with_placebo(
-            store,
+            _gate_store(store, lookback_days),  # window a deep SQL backfill -> seconds, not minutes
             step_days=step_days,
             post_days=post_days,
             n_permutations=n_permutations,
