@@ -16,6 +16,7 @@ from typing import Any
 
 from market_trader.execution.broker import (
     Account,
+    BrokerError,
     Order,
     OrderSide,
     OrderStatus,
@@ -38,10 +39,11 @@ _STATUS_MAP = {
 }
 
 
-class AlpacaError(RuntimeError):
+class AlpacaError(BrokerError):
     """An Alpaca REST call failed; carries the HTTP status and response body so the
     real reason (e.g. ``insufficient buying power``) reaches the logs instead of a
-    bare ``403: Forbidden``."""
+    bare ``403: Forbidden``. A ``BrokerError`` so the engine can skip one rejected
+    order and keep the rest of the rebalance."""
 
     def __init__(self, status: int, body: str, *, method: str, path: str) -> None:
         self.status = status

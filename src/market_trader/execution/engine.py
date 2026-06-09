@@ -17,13 +17,16 @@ from datetime import datetime
 
 from market_trader.backtest.types import Weights
 from market_trader.config import Settings, get_settings
+from market_trader.core.identity import with_deterministic_id
+from market_trader.core.schema import Observation
+from market_trader.core.time import utcnow
 from market_trader.execution.audit import log_execution_event
-from market_trader.execution.broker import Broker, Order, OrderSide
+from market_trader.execution.broker import Broker, BrokerError, Order, OrderSide
 from market_trader.execution.guardrails import (
     KillSwitch,
     KillSwitchEngaged,
-    OrderRateExceeded,
     OrderRateLimiter,
+    OrderSanityError,
     sanity_check_order,
 )
 from market_trader.observability import get_logger
@@ -31,6 +34,21 @@ from market_trader.portfolio.risk import DrawdownCircuitBreaker, RiskLimits, che
 from market_trader.storage.bitemporal import BitemporalStore
 
 _log = get_logger("execution")
+
+# Persisted high-water mark for the drawdown governor. A fresh ExecutionEngine (and breaker)
+# is built every cycle, so without this the peak reseeds to the cycle's equity each run and the
+# 25% governor can only ever see an intra-cycle drop. Persisting it lets the breaker measure
+# drawdown from the true multi-day/multi-restart peak.
+DRAWDOWN_STATE_DATASET = "risk.drawdown_state"
+
+
+def _load_drawdown_state(store: BitemporalStore) -> tuple[float | None, bool]:
+    rows = store.as_of(utcnow(), dataset=DRAWDOWN_STATE_DATASET)
+    if not rows:
+        return None, False
+    latest = max(rows, key=lambda o: o.event_time)  # append-only log -> newest wins
+    peak = latest.value.get("peak")
+    return (float(peak) if peak else None), bool(latest.value.get("tripped", False))
 
 
 class ExecutionEngine:
@@ -51,6 +69,12 @@ class ExecutionEngine:
         self.audit_store = audit_store
         self.kill_switch = kill_switch or KillSwitch()
         self.breaker = breaker or DrawdownCircuitBreaker(self.settings.max_drawdown_halt)
+        # Restore the drawdown high-water mark so the governor survives the per-cycle engine
+        # rebuild (only when we own the breaker and have somewhere to read it from).
+        if breaker is None and self.audit_store is not None:
+            peak, was_tripped = _load_drawdown_state(self.audit_store)
+            if peak is not None:
+                self.breaker.seed(peak, was_tripped)
         self.rate_limiter = rate_limiter or OrderRateLimiter(self.settings.max_orders_per_interval)
 
     def rebalance(
@@ -62,9 +86,13 @@ class ExecutionEngine:
             raise KillSwitchEngaged(self.kill_switch.reason or "engaged")
 
         account = self.broker.get_account()
-        if self.breaker.update(account.equity):
+        tripped = self.breaker.update(account.equity)
+        self._save_drawdown_state(as_of)  # persist the high-water mark across cycles
+        if tripped:
             self.kill_switch.engage("drawdown_circuit_breaker")
-            self._audit(as_of, "PORTFOLIO", "halt", {"reason": "drawdown"})
+            self._audit(
+                as_of, "PORTFOLIO", "halt", {"reason": "drawdown", "peak": self.breaker.peak}
+            )
             raise KillSwitchEngaged("drawdown circuit-breaker tripped")
 
         # Daily-loss kill: stop and require a human re-arm after a hard down day.
@@ -136,11 +164,39 @@ class ExecutionEngine:
         planned.sort(key=lambda op: op[0].side != OrderSide.SELL)  # SELLs first
 
         orders: list[Order] = []
+        skipped = 0
         for order, price in planned:
-            sanity_check_order(order, ref_price=price)
+            try:
+                sanity_check_order(order, ref_price=price)
+            except OrderSanityError as exc:  # a malformed order never aborts the book
+                skipped += 1
+                _log.warning("order_skipped", symbol=order.symbol, reason=str(exc))
+                self._audit(as_of, order.symbol, "order_skipped", {"reason": str(exc)})
+                continue
             if not self.rate_limiter.allow():
-                raise OrderRateExceeded(f"order-rate cap {self.rate_limiter.max_orders} reached")
-            filled = self.broker.submit_order(order)
+                # Protective cap reached: stop submitting but keep the fills so far, rather
+                # than aborting the whole rebalance (a large book must not lose its sells).
+                _log.warning(
+                    "order_rate_capped", cap=self.rate_limiter.max_orders, placed=len(orders)
+                )
+                self._audit(
+                    as_of, "PORTFOLIO", "order_rate_capped", {"cap": self.rate_limiter.max_orders}
+                )
+                break
+            try:
+                filled = self.broker.submit_order(order)
+            except BrokerError as exc:  # e.g. 403 insufficient buying power / not fractionable
+                skipped += 1
+                _log.warning(
+                    "order_rejected", symbol=order.symbol, side=order.side.value, reason=str(exc)
+                )
+                self._audit(
+                    as_of,
+                    order.symbol,
+                    "order_rejected",
+                    {"side": order.side.value, "qty": order.qty, "reason": str(exc)},
+                )
+                continue  # the single bad name is skipped; the rest of the book still trades
             orders.append(filled)
             self._audit(
                 as_of,
@@ -153,6 +209,10 @@ class ExecutionEngine:
                     "status": filled.status.value,
                     "mode": self.settings.execution_mode,
                 },
+            )
+        if skipped:
+            self._audit(
+                as_of, "PORTFOLIO", "rebalance_summary", {"placed": len(orders), "skipped": skipped}
             )
         return orders
 
@@ -170,6 +230,28 @@ class ExecutionEngine:
             orders.append(self.broker.submit_order(order))
             self._audit(as_of, pos.symbol, "flatten", {"client_order_id": order.client_order_id})
         return orders
+
+    def _save_drawdown_state(self, as_of: datetime) -> None:
+        """Persist the breaker's high-water mark so the next cycle's engine restores it."""
+        peak = self.breaker.peak
+        if self.audit_store is None or peak is None:
+            return
+        self.audit_store.upsert_many(
+            [
+                with_deterministic_id(
+                    Observation(
+                        source="execution",
+                        dataset=DRAWDOWN_STATE_DATASET,
+                        entity_type="portfolio",
+                        entity_id="PORTFOLIO",
+                        ref="drawdown",
+                        event_time=as_of,
+                        knowledge_time=as_of,
+                        value={"peak": float(peak), "tripped": bool(self.breaker.tripped)},
+                    )
+                )
+            ]
+        )
 
     def _audit(self, as_of: datetime, symbol: str, event: str, detail: dict) -> None:
         if self.audit_store is not None:

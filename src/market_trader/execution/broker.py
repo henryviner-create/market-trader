@@ -12,6 +12,13 @@ from enum import StrEnum
 from typing import Protocol, runtime_checkable
 
 
+class BrokerError(RuntimeError):
+    """A broker rejected an order or a request failed. Broker-agnostic base so the
+    execution engine can isolate a single bad order (e.g. a 403 ``insufficient buying
+    power`` / ``not fractionable``) and skip it without aborting the whole rebalance.
+    Concrete adapters (e.g. ``AlpacaError``) subclass this."""
+
+
 class OrderSide(StrEnum):
     BUY = "buy"
     SELL = "sell"
