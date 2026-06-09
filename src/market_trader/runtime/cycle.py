@@ -11,6 +11,7 @@ order routing stays gated by ``Settings.assert_live_allowed()`` in the engine.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 
@@ -24,12 +25,14 @@ from market_trader.execution.broker import Broker, Order
 from market_trader.execution.engine import ExecutionEngine
 from market_trader.execution.paper_broker import PaperBroker
 from market_trader.features import FeatureStore, default_features
+from market_trader.features.base import Feature
 from market_trader.features.news import news_features
 from market_trader.observability import get_logger
 from market_trader.portfolio import RiskLimits, apply_risk_limits, size_book
 from market_trader.reasoning import LLMProvider, build_briefing_context, generate_llm_brief
 from market_trader.runtime.learning import grade_predictions, log_cycle_predictions
 from market_trader.runtime.scoring import ScoreFn, build_scorer, composite_scorer
+from market_trader.runtime.signal_ic import measure_signal_ic
 from market_trader.storage import InMemoryBitemporalStore
 from market_trader.storage.bitemporal import BitemporalStore
 from market_trader.universe.liquid import MEGACAP_WATCHLIST, resolve_universe
@@ -49,6 +52,43 @@ def _measured_signal_ic(
         store, as_of, model_version=settings.scorer, min_abs_ic=settings.ic_min_abs
     )
     return {str(k): float(v) for k, v in graded.get("ic", {}).items()}
+
+
+def _signal_ic_for_weighting(
+    store: BitemporalStore,
+    settings: Settings,
+    features: Sequence[Feature],
+    symbols: Sequence[str],
+    as_of: datetime,
+    *,
+    horizon_days: int = 5,
+) -> dict[str, float]:
+    """IC used to weight the composite — with a cold-start bootstrap.
+
+    Prefer this scorer's own graded predictions (the live learning loop). But that needs
+    weeks of matured cohorts before it has anything to say, so until then it returns ``{}``
+    and the book falls back to flat equal weights. Instead, on a cold start we bootstrap from
+    the *offline* cross-sectional IC measured over the price history in the store, so the book
+    is evidence-weighted from day one. The live grades override the prior the moment they
+    exist (we only compute the offline fallback when the live read is empty).
+    """
+    live = _measured_signal_ic(store, settings, as_of)
+    if live:
+        _log.info("signal_ic", source="graded", signals=len(live))
+        return live
+    # Cold start: sample independent windows (every >= horizon) and keep only signals whose
+    # historical IC is both material AND significant over enough dates — so a noisy small-sample
+    # blip (the insider-mirage failure mode) can't set the live weights.
+    offline = measure_signal_ic(
+        store, features, symbols, as_of, horizon_days=horizon_days, every=max(horizon_days, 5)
+    )
+    boot = {
+        name: s.mean_ic
+        for name, s in offline.items()
+        if s.n_dates >= 8 and abs(s.ic_t_stat) >= 2.0 and abs(s.mean_ic) >= settings.ic_min_abs
+    }
+    _log.info("signal_ic", source="bootstrap_offline", signals=len(boot))
+    return boot
 
 
 # Re-exported for callers/tests; the live default universe is now the broad
@@ -495,8 +535,7 @@ def run_live_paper_cycle(
     fs = FeatureStore(store, features)
     ic: dict[str, float] | None = None
     if settings.scorer.strip().lower() == "composite" and settings.ic_weighting:
-        ic = _measured_signal_ic(store, settings, as_of)
-        _log.info("ic_weighting", signals=len(ic), ic={k: round(v, 4) for k, v in ic.items()})
+        ic = _signal_ic_for_weighting(store, settings, features, watchlist, as_of)
     score_fn = build_scorer(settings, store, fs, watchlist, as_of, ic=ic)
 
     # If a sleeve is on, reserve the names it owns (the daily book leaves them alone) and

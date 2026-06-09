@@ -416,7 +416,9 @@ def cmd_score_predictions(_: argparse.Namespace) -> int:
         data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
         records = data.fetch_daily_bars(
             resolve_universe(settings.universe),
-            start=end - timedelta(days=60),
+            # Wide enough that older prediction cohorts have their forward window present and
+            # can mature, not just the last few sessions.
+            start=end - timedelta(days=180),
             end=end,
             feed=settings.alpaca_data_feed,
         )
@@ -469,7 +471,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
         data = AlpacaDataClient(settings.alpaca_key_id, settings.alpaca_secret_key)
         records = data.fetch_daily_bars(
             resolve_universe(settings.universe),
-            start=end - timedelta(days=60),
+            start=end - timedelta(days=180),  # enough history for older cohorts to mature
             end=end,
             feed=settings.alpaca_data_feed,
         )
