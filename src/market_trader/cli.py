@@ -1148,11 +1148,30 @@ def cmd_build_universe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _ic_verdict(t_stat: float, *, bonferroni: bool, fdr: bool) -> str:
+    """One-word significance verdict after the multiple-testing correction."""
+    if bonferroni:
+        return "[PASS family-wise (Bonferroni+FDR)]"
+    if fdr:
+        return "[pass FDR only]"
+    if abs(t_stat) >= 2.0:
+        return "[raw |t|>=2 ONLY — fails correction]"
+    return "[n.s.]"
+
+
 def cmd_signal_ic(args: argparse.Namespace) -> int:
-    """Measure each signal's out-of-sample information coefficient (IC) over history."""
+    """Measure each signal's OOS IC over history, corrected for multiple testing.
+
+    With ``--holdout`` the measurement runs on a SEALED most-recent slice and each verdict is
+    written to a single-look ledger: re-running returns the original verdict instead of a fresh,
+    shoppable number. Together these stop a lucky subset (the insider t=4.4->noise flip) from
+    being promoted on breadth-of-search or repetition-of-search.
+    """
     settings = get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
 
+    from market_trader.backtest.holdout import HoldoutLook, confirm_on_holdout, holdout_start
+    from market_trader.backtest.multiple_testing import correct_family
     from market_trader.core.time import DISTANT_FUTURE, utcnow
     from market_trader.features import candidate_features
     from market_trader.runtime.signal_ic import measure_signal_ic
@@ -1167,14 +1186,17 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
         # one-time price-panel build) don't re-query the DB at every sampled date.
         store = InMemoryBitemporalStore()
         store.add_many(db.as_of(DISTANT_FUTURE))
+        now = utcnow()
+        since = holdout_start(store, now, frac=args.holdout_frac) if args.holdout else None
         ics = measure_signal_ic(
             store,
             candidate_features(),
             resolve_universe(settings.universe),
-            utcnow(),
+            now,
             horizon_days=args.horizon,
             every=args.every,
             max_dates=args.dates,
+            since=since,
         )
     except Exception as exc:
         print(f"signal-ic failed: {exc}")
@@ -1184,13 +1206,35 @@ def cmd_signal_ic(args: argparse.Namespace) -> int:
             "signal-ic: no gradable history — backfill prices/filings first (simulate, ingest-filings)"
         )
         return 0
-    print(f"signal-ic [horizon={args.horizon}d, per-date cross-sectional rank IC]")
+
+    fam = correct_family({s: r.ic_t_stat for s, r in ics.items()}, alpha=args.alpha)
+    mode = "HOLDOUT (sealed, single-look)" if args.holdout else "research"
+    print(
+        f"signal-ic [{mode}; horizon={args.horizon}d; N={fam.n_trials} signals; "
+        f"alpha={args.alpha}; Bonferroni bar |t|>={fam.bonferroni_t:.2f}]"
+    )
     for sig, r in sorted(ics.items(), key=lambda kv: abs(kv[1].mean_ic), reverse=True):
-        flag = "  <- significant" if abs(r.ic_t_stat) >= 2.0 else ""
-        print(
-            f"  {sig:24} IC={r.mean_ic:+.4f}  t={r.ic_t_stat:+.2f}  "
-            f"hit={r.hit_rate:.0%}  n_dates={r.n_dates}{flag}"
+        verdict = _ic_verdict(
+            r.ic_t_stat, bonferroni=fam.bonferroni.get(sig, False), fdr=fam.fdr.get(sig, False)
         )
+        line = (
+            f"  {sig:24} IC={r.mean_ic:+.4f}  t={r.ic_t_stat:+.2f}  "
+            f"hit={r.hit_rate:.0%}  n_dates={r.n_dates}  {verdict}"
+        )
+        if args.holdout:
+            # The ledger lives in the persistent DB (cheap, single look per signal). The first
+            # confirmation is sealed; later runs return it rather than a re-shopped number.
+            candidate = HoldoutLook(
+                sig, now, r.n_dates, r.mean_ic, r.ic_t_stat, fam.fdr.get(sig, False)
+            )
+            look, repeat = confirm_on_holdout(db, candidate)
+            line += (
+                f"  [SEALED {look.decided_at.date()}: t={look.t_stat:+.2f} "
+                f"{'PASS' if look.passed else 'FAIL'}]"
+                if repeat
+                else "  [sealed: first look]"
+            )
+        print(line)
     return 0
 
 
@@ -1530,6 +1574,21 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=5,
         help="days between sampled dates (use >= horizon for an independent t-stat)",
+    )
+    signal_ic.add_argument(
+        "--alpha", type=float, default=0.05, help="family-wise significance level"
+    )
+    signal_ic.add_argument(
+        "--holdout",
+        action="store_true",
+        help="confirm on the SEALED holdout slice (single-look ledger; refuses re-shopping)",
+    )
+    signal_ic.add_argument(
+        "--holdout-frac",
+        type=float,
+        default=0.2,
+        dest="holdout_frac",
+        help="fraction of the most-recent history sealed as the holdout",
     )
     signal_ic.set_defaults(func=cmd_signal_ic)
 
