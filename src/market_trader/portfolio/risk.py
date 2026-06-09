@@ -86,6 +86,16 @@ class DrawdownCircuitBreaker:
         self._peak: float | None = None
         self.tripped = False
 
+    @property
+    def peak(self) -> float | None:
+        return self._peak
+
+    def seed(self, peak: float | None, tripped: bool = False) -> None:
+        """Restore a persisted high-water mark so the governor measures drawdown from the
+        true peak across cycles/restarts — not from this cycle's (already-lower) equity."""
+        self._peak = peak
+        self.tripped = tripped
+
     def update(self, equity: float) -> bool:
         self._peak = equity if self._peak is None else max(self._peak, equity)
         if self._peak > 0 and (equity / self._peak - 1.0) <= -self.max_drawdown:

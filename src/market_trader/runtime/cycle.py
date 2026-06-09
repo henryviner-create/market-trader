@@ -362,7 +362,10 @@ def run_paper_cycle(
         if sym not in rebalance_target and sym in prices:
             rebalance_target[sym] = 0.0
 
-    engine = ExecutionEngine(broker, settings=settings, limits=limits)
+    # Pass the store as the audit sink so the execution audit AND the drawdown high-water
+    # mark persist — the latter lets the 25% governor measure drawdown from the true peak
+    # across the per-cycle engine rebuilds (otherwise the peak resets every cycle).
+    engine = ExecutionEngine(broker, settings=settings, limits=limits, audit_store=store)
     orders = engine.rebalance(rebalance_target, prices, as_of=as_of) if rebalance_target else []
 
     brief: str | None = None

@@ -49,10 +49,12 @@ class Settings(BaseSettings):
     max_net_exposure: float = 1.0
     max_position_weight: float = 0.10
     max_drawdown_halt: float = 0.20
-    # Daily-loss kill switch: halt (and require a human re-arm) once equity falls
-    # this far below the previous close. 0 = off. Now ENFORCED in the engine — it
-    # was previously inert. Set it deliberately for an aggressive book (e.g. 0.08).
-    max_daily_loss: float = 0.0
+    # Daily-loss kill switch: halt (and require a human re-arm) once equity falls this far
+    # below the previous close. ON by default as the fast-crash backstop — the drawdown
+    # breaker (from-peak) is slow by nature, so this catches a single brutal session before
+    # it compounds. ~8% is a many-sigma day for a vol-8% book, so it won't false-trip on
+    # noise. 0 = off; raise/lower via MT_MAX_DAILY_LOSS for a more/less aggressive book.
+    max_daily_loss: float = 0.08
     max_orders_per_interval: int = 50
     capital_ceiling: float = 1000.0  # hard cap on deployable capital; low by default
     # Order in whole shares (default) rather than fractional. Many small/mid-cap names are

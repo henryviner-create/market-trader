@@ -25,7 +25,7 @@ from market_trader.execution import (
     reconcile,
     sanity_check_order,
 )
-from market_trader.execution.broker import Account
+from market_trader.execution.broker import Account, BrokerError
 from market_trader.portfolio import RiskLimits
 from market_trader.storage import InMemoryBitemporalStore
 
@@ -210,10 +210,41 @@ def test_daily_loss_limit_halts_and_engages_kill_switch() -> None:
     assert engine.kill_switch.engaged and not broker.submitted  # halted before any order
 
 
-def test_daily_loss_limit_off_by_default_lets_a_down_day_trade() -> None:
-    broker = _AcctBroker(equity=60_000.0, last_equity=100_000.0)  # -40%, but limit disabled
-    orders = _engine(broker, ceiling=100_000.0).rebalance({"AAPL": 0.5}, {"AAPL": 100.0}, as_of=T)
-    assert orders and broker.submitted  # default max_daily_loss=0 -> no daily halt
+def test_daily_loss_off_when_disabled_lets_a_down_day_trade() -> None:
+    broker = _AcctBroker(equity=60_000.0, last_equity=100_000.0)  # -40%, but the kill is disabled
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=100_000.0,
+        max_daily_loss=0.0,  # explicitly off
+        max_drawdown_halt=0.9,
+        max_orders_per_interval=50,
+    )
+    engine = ExecutionEngine(
+        broker,
+        settings=settings,
+        limits=RiskLimits(max_position_weight=1.0, max_gross_exposure=1.0),
+    )
+    orders = engine.rebalance({"AAPL": 0.5}, {"AAPL": 100.0}, as_of=T)
+    assert orders and broker.submitted  # max_daily_loss=0 -> no daily halt
+
+
+def test_daily_loss_on_by_default_halts_a_brutal_day() -> None:
+    # The daily-loss backstop is now ON by default (0.08); a brutal single session halts.
+    broker = _AcctBroker(equity=91_000.0, last_equity=100_000.0)  # -9% on the day
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=100_000.0,
+        max_drawdown_halt=0.9,  # high, so the daily-loss rail is what trips (not the DD breaker)
+        max_orders_per_interval=50,
+    )
+    engine = ExecutionEngine(
+        broker,
+        settings=settings,
+        limits=RiskLimits(max_position_weight=1.0, max_gross_exposure=1.0),
+    )
+    with pytest.raises(KillSwitchEngaged):
+        engine.rebalance({"AAPL": 0.5}, {"AAPL": 100.0}, as_of=T)
+    assert engine.kill_switch.engaged and not broker.submitted
 
 
 def test_reconcile_detects_divergence() -> None:
@@ -285,3 +316,81 @@ def test_rebalance_band_skips_small_drifts_but_not_entries_or_exits() -> None:
     traded = {o.symbol for o in orders}
     assert "HOLD" not in traded  # inside the band -> not churned
     assert "EXIT" in traded and "NEW" in traded  # full exit / entry always execute
+
+
+class _OneRejectBroker:
+    """Fills every order except symbols in ``reject``, which raise ``BrokerError`` (a 403)."""
+
+    def __init__(self, reject: set[str], *, equity: float = 100_000.0) -> None:
+        self.reject = reject
+        self._acct = Account(equity, equity, equity, last_equity=0.0)
+        self.submitted: list[Order] = []
+
+    def get_account(self) -> Account:
+        return self._acct
+
+    def get_positions(self) -> list[Position]:
+        return []
+
+    def get_open_orders(self) -> list[Order]:
+        return []
+
+    def submit_order(self, order: Order) -> Order:
+        if order.symbol in self.reject:
+            raise BrokerError("403 insufficient buying power")
+        self.submitted.append(order)
+        return replace(order, status=OrderStatus.FILLED, filled_qty=order.qty)
+
+    def cancel_order(self, client_order_id: str) -> None:
+        pass
+
+
+def test_rebalance_skips_a_rejected_order_and_completes() -> None:
+    # The load-bearing resilience fix: one unfillable name (a 403) must NOT abort the book —
+    # every other order still goes in, so the cycle completes and logs its cohort.
+    broker = _OneRejectBroker({"REJECT"})
+    orders = _engine(broker, ceiling=100_000.0).rebalance(
+        {"GOOD1": 0.3, "REJECT": 0.3, "GOOD2": 0.3},
+        {"GOOD1": 100.0, "REJECT": 100.0, "GOOD2": 100.0},
+        as_of=T,
+    )
+    assert {o.symbol for o in orders} == {"GOOD1", "GOOD2"}  # bad name skipped, rest trade
+    assert "REJECT" not in {o.symbol for o in broker.submitted}
+
+
+def test_rebalance_stops_at_rate_cap_but_keeps_fills() -> None:
+    # Hitting the order-rate cap stops submission but returns the fills so far, instead of
+    # aborting the whole rebalance (a 100-name book must not lose its sells at order 50).
+    broker = PaperBroker({f"S{i}": 100.0 for i in range(5)}, starting_cash=100_000.0)
+    settings = Settings(
+        execution_mode="paper", capital_ceiling=100_000.0, max_orders_per_interval=2
+    )
+    engine = ExecutionEngine(broker, settings=settings, limits=RiskLimits(max_position_weight=1.0))
+    orders = engine.rebalance(
+        {f"S{i}": 0.2 for i in range(5)}, {f"S{i}": 100.0 for i in range(5)}, as_of=T
+    )
+    assert len(orders) == 2  # capped at 2, fills kept rather than the rebalance aborting
+
+
+def test_drawdown_breaker_peak_persists_across_engine_instances() -> None:
+    # A fresh engine (and breaker) is built every cycle; the high-water mark must survive that
+    # rebuild via the audit store, or the 25% governor can only ever see an intra-cycle drop.
+    store = InMemoryBitemporalStore()
+    broker = PaperBroker({"A": 100.0}, starting_cash=100_000.0)
+    settings = Settings(
+        execution_mode="paper",
+        capital_ceiling=100_000.0,
+        max_drawdown_halt=0.2,
+        max_daily_loss=0.0,  # isolate the drawdown breaker
+        max_orders_per_interval=50,
+    )
+    limits = RiskLimits(max_position_weight=1.0, max_gross_exposure=1.0)
+    ExecutionEngine(broker, settings=settings, limits=limits, audit_store=store).rebalance(
+        {"A": 1.0}, {"A": 100.0}, as_of=T
+    )  # peak ~100k persisted
+    broker.set_price("A", 70.0)  # equity -> ~70k (-30% from the persisted peak)
+
+    fresh = ExecutionEngine(broker, settings=settings, limits=limits, audit_store=store)
+    with pytest.raises(KillSwitchEngaged):  # loads the 100k peak -> -30% trips (not 70k -> no trip)
+        fresh.rebalance({"A": 1.0}, {"A": 70.0}, as_of=T2)
+    assert fresh.kill_switch.engaged
