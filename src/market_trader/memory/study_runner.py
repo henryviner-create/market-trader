@@ -17,9 +17,37 @@ import pandas as pd
 from market_trader.backtest.pit import observations_to_price_frame
 from market_trader.core.synthetic import PRICE_DATASET
 from market_trader.core.time import DISTANT_FUTURE
-from market_trader.memory.event_study import EventOutcomeDistribution, aggregate_event_study
+from market_trader.memory.event_study import (
+    EventOutcomeDistribution,
+    PlaceboResult,
+    aggregate_event_study,
+    placebo_event_study,
+)
 from market_trader.memory.taxonomy import detect_events
 from market_trader.storage.bitemporal import BitemporalStore
+
+
+def _collect_anchors(
+    store: BitemporalStore, *, step_days: int, min_history: int
+) -> tuple[dict[str, list[tuple[str, datetime]]], pd.DataFrame]:
+    """Detect deduped (entity, knowledge_time) anchors per event type, plus the returns panel."""
+    panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=PRICE_DATASET))
+    if panel.empty:
+        return {}, panel
+    returns = panel.pct_change().iloc[1:]
+    dates = [d.to_pydatetime() for d in pd.DatetimeIndex(panel.index)]
+    schedule = dates[min_history::step_days]
+
+    seen: set[tuple[str, str, datetime]] = set()
+    anchors_by_type: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
+    for as_of in schedule:
+        for ev in detect_events(store, as_of):
+            key = (ev.entity_id, str(ev.event_type), ev.knowledge_time)
+            if key in seen:
+                continue
+            seen.add(key)
+            anchors_by_type[str(ev.event_type)].append((ev.entity_id, ev.knowledge_time))
+    return anchors_by_type, returns
 
 
 def run_event_study(
@@ -35,28 +63,49 @@ def run_event_study(
     no price history or no events). Detection is repeated every ``step_days`` and deduped, so
     a persistent cluster counts once per fresh knowledge-time, not once per scan.
     """
-    panel = observations_to_price_frame(store.as_of(DISTANT_FUTURE, dataset=PRICE_DATASET))
-    if panel.empty:
+    anchors_by_type, returns = _collect_anchors(store, step_days=step_days, min_history=min_history)
+    if returns.empty:
         return []
-    returns = panel.pct_change().iloc[1:]
-    dates = [d.to_pydatetime() for d in pd.DatetimeIndex(panel.index)]
-    schedule = dates[min_history::step_days]
-
-    seen: set[tuple[str, str, datetime]] = set()
-    anchors_by_type: dict[str, list[tuple[str, datetime]]] = defaultdict(list)
-    for as_of in schedule:
-        for ev in detect_events(store, as_of):
-            key = (ev.entity_id, str(ev.event_type), ev.knowledge_time)
-            if key in seen:
-                continue
-            seen.add(key)
-            anchors_by_type[str(ev.event_type)].append((ev.entity_id, ev.knowledge_time))
-
     studies = [
         aggregate_event_study(anchors, returns, label=etype, post=post_days)
         for etype, anchors in anchors_by_type.items()
     ]
     return sorted(studies, key=lambda d: d.n, reverse=True)
+
+
+def run_event_study_with_placebo(
+    store: BitemporalStore,
+    *,
+    step_days: int = 5,
+    post_days: int = 5,
+    min_history: int = 60,
+    n_permutations: int = 200,
+    seed: int = 0,
+) -> list[tuple[EventOutcomeDistribution, PlaceboResult]]:
+    """As :func:`run_event_study`, plus a permutation null per type — the sharper gate.
+
+    Pairs each event type's CAR with a placebo p-value (its CAR vs random re-anchoring on the
+    same names). A type can be t-significant yet FAIL the placebo, which is the tell that its
+    t-stat was inflated by clustering — the guard that catches the insider-mirage class.
+    """
+    anchors_by_type, returns = _collect_anchors(store, step_days=step_days, min_history=min_history)
+    if returns.empty:
+        return []
+    paired = [
+        (
+            aggregate_event_study(anchors, returns, label=etype, post=post_days),
+            placebo_event_study(
+                anchors,
+                returns,
+                label=etype,
+                post=post_days,
+                n_permutations=n_permutations,
+                seed=seed,
+            ),
+        )
+        for etype, anchors in anchors_by_type.items()
+    ]
+    return sorted(paired, key=lambda dp: dp[0].n, reverse=True)
 
 
 def significant_event_types(
